@@ -248,12 +248,12 @@ def creds_from_cmdline():
 
 	del sys.argv[2:4]
 
-def set_creds(l1, l2):
+def set_creds(length):
 
-	if len(sys.argv) >= l2:
+	if len(sys.argv) >= length+2:
 		creds_from_cmdline()
 
-	elif len(sys.argv) >= l1:
+	elif len(sys.argv) >= length:
 		creds_from_file()
 
 	else:
@@ -348,7 +348,7 @@ def smb_exec():
 	Execute a command remotely (use "cmd" for a command prompt)
 	"""
 
-	set_creds(4, 6)
+	set_creds(4)
 	check_creds()
 	print winexe(' '.join(sys.argv[3:]))
 
@@ -358,7 +358,7 @@ def smb_upexec():
 	Upload a file and run it remotely with the specified arguments
 	"""
 
-	set_creds(4, 6)
+	set_creds(4)
 	check_creds()
 	print up_and_exec(sys.argv[3:])
 
@@ -368,7 +368,7 @@ def smb_upload():
 	Upload a file to the host
 	"""
 
-	set_creds(5, 7)
+	set_creds(5)
 	check_creds()
 
 	if len(sys.argv) != 5:
@@ -386,7 +386,7 @@ def smb_download():
 	Download a file from the host
 	"""
 
-	set_creds(5, 7)
+	set_creds(5)
 	check_creds()
 
 	if len(sys.argv) != 5:
@@ -400,7 +400,7 @@ def smb_scrshot():
 	Takes a screenshot of the active session
 	"""
 
-	set_creds(3, 5)
+	set_creds(3)
 	check_tool('runastask')
 	check_tool('nircmd')
 
@@ -436,7 +436,7 @@ def smb_vsscpy():
 	"""
 
 	check_tool('vsscpy')
-	set_creds(5, 7)
+	set_creds(5)
 
 	if len(sys.argv) != 5:
 		usage()
@@ -471,7 +471,7 @@ def smb_fwrule(action = None, param = None):
 	
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
-		set_creds(5, 7)
+		set_creds(5)
 		check_creds()
 
 		if len(sys.argv) != 5 or sys.argv[3] not in ['add', 'del']:
@@ -504,7 +504,7 @@ def smb_mount():
 	Mount a remote share locally via CIFS (Pass-the-Hash not available)
 	"""
 
-	set_creds(5, 7)
+	set_creds(5)
 
 	if len(sys.argv) != 5:
 		usage()
@@ -536,20 +536,20 @@ def smb_rdp():
 	"""
 
 	if 'enable' in sys.argv:
-		set_creds(4, 6)
+		set_creds(4)
 		text("[*] Updating Registry...")
 		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
 		smb_fwrule('add', 3389)
 		sys.exit(0)
 
 	if 'disable' in sys.argv:
-		set_creds(4, 6)
+		set_creds(4)
 		text("[*] Updating Registry...")
 		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
 		smb_fwrule('del', 3389);
 		sys.exit(0)
 
-	set_creds(3, 5)
+	set_creds(3)
 	check_tool('xfreerdp')
 
 	res = screen_resolution()

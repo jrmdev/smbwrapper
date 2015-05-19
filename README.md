@@ -106,16 +106,18 @@ For example, if you want it to support your *super-cool custom-made antivirus-by
 		Dumps remote password hashes using my prog.
 		"""
 
-		set_creds(3, 5)
+		set_creds(4)
 		check_creds()
 		print up_and_exec(['/path/to/my/prog.exe', '--dump'])
 
 
-`set_creds()` takes two arguments: the minimum length of `sys.argv` when the credentials are read from the sqlite db or from the command-line. 
+`set_creds()` parameter is the minimum length that `sys.argv` can have for the credentials to be read from the vault. If `sys.argv` length is bigger, credentials will be read from the command-line.
 
 `check_creds()` is optional but will prevent running further commands if the credentials don't work.
 
 That's all you need to do.
+
+Note: You could also simply run `smb.py upexec 1.2.3.4 /path/to/my/prog.exe --dump` but creating your own function enables you to add extra functionality easily and can be useful to parse and reuse the output.
 
 ### Tools developed for the occasion ###
 
