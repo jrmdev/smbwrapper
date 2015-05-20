@@ -143,12 +143,7 @@ def check_creds():
 
 def check_tool(tool):
 	if tool in TOOLS.keys():
-
-		if isinstance(TOOLS[tool], dict):
-			return check_tool(TOOLS[tool])
-
-		else:
-			return check_path(TOOLS[tool])
+		return check_tool(TOOLS[tool]) if isinstance(TOOLS[tool], dict) else check_path(TOOLS[tool])
 
 	return False
 
@@ -217,7 +212,7 @@ def usage():
 
 	sys.exit(0)
 
-def creds_from_file():
+def creds_from_vault():
 
 	cursor = sqlite3.connect(CONF['creds_file'])
 
@@ -260,7 +255,7 @@ def set_creds(length):
 		creds_from_cmdline()
 
 	elif len(sys.argv) >= length:
-		creds_from_file()
+		creds_from_vault()
 
 	else:
 		usage()
@@ -358,12 +353,7 @@ def winexe(cmd):
 	return ''
 
 def os_architecture():
-	check = smbclient('dir "\Program Files (x86)"')
-
-	if 'NO_SUCH_FILE' in check:
-		return 32
-
-	return 64
+	return 32 'NO_SUCH_FILE' in smbclient('dir "\Program Files (x86)"') else 64
 
 def screen_resolution():
 	xrandr = subprocess.Popen(['xrandr', '--current'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.readlines()
