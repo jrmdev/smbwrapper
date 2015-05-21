@@ -56,8 +56,6 @@ def main():
 	if len(sys.argv) < 2 or '-h' in sys.argv or 'help' in sys.argv:
 		usage()
 
-	check_vault()
-
 	# Enable LocalSystem elevation where possible
 	if '-s' in sys.argv:
 		CONF['system'] = True
@@ -72,8 +70,10 @@ def main():
 		except:
 			text("[!] Option -f requires an argument.", 1)
 
-		if not os.path.exists(CONF['creds_file']):
-			text("[!] %s: file not found." % CONF['creds_file'], 1)
+	check_vault()
+
+	if not os.path.exists(CONF['creds_file']):
+		text("[!] %s: file not found." % CONF['creds_file'], 1)
 
 	# Check command validity and jump to main function
 	command = 'smb_%s' % sys.argv[1]
@@ -113,7 +113,7 @@ def text(txt, e = False):
 		elif txt[0:3] == '[!]':
 			ret = color('[!]', 1, 1) + txt[3:]
 		elif txt[0:3] == '[i]':
-			ret = color(txt, 3, 1);
+			ret = color(txt, 3, 1)
 		else:
 			ret = txt
 
@@ -607,7 +607,7 @@ def smb_creddump():
 	except:
 		pass
 
-	text("[*] Done.")
+	text("[*] SYSTEM, SAM and SECURITY hives were saved in the current directory.")
 
 def smb_scrshot():
 	"""
@@ -673,7 +673,7 @@ def smb_vsscpy():
 	smbclient('del "\\windows\\temp\\temp.tmp"')
 	smbclient('del "\\windows\\temp\\vsscpy.vbs"')
 
-	text("[*] Done.");
+	text("[*] Done.")
 
 def smb_fwrule(action = None, param = None):
 	"""
@@ -749,14 +749,14 @@ def smb_rdp():
 	if 'enable' in sys.argv:
 		set_creds(4)
 		text("[*] Updating Registry...")
-		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
+		winexe('reg add "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
 		smb_fwrule('add', 3389)
 		sys.exit(0)
 
 	if 'disable' in sys.argv:
 		set_creds(4)
 		text("[*] Updating Registry...")
-		winexe('reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
+		winexe('reg add "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
 		smb_fwrule('del', 3389);
 		sys.exit(0)
 
@@ -828,7 +828,7 @@ def smb_portfwd(lport = None, rhost = None, rport = None):
 	except KeyboardInterrupt:
 
 		sys.stdout.write('\r')
-		text("[*] Stopping port forwarding...");
+		text("[*] Stopping port forwarding...")
 		winexe('netsh interface portproxy reset')
 
 	text("[*] Done.")
@@ -948,4 +948,4 @@ def smb_hash():
 	print ntlm_hash(sys.argv[2])
 
 if __name__ == "__main__":
-	main() 
+	main()
