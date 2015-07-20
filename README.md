@@ -92,6 +92,9 @@ Terminal 2 - Connect to the local port
 	   smb.py download [-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
 		Download a file from the host
 
+	   smb.py creddump [-s] <ip> [ user ] [ passwd/nthash ]
+		Extract SAM, SECURITY, SYSTEM hives and dump SAM, DCC, LSA Secrets
+
 	   smb.py scrshot [-s] <ip> [ user ] [ passwd/nthash ]
 		Takes a screenshot of the active session
 
@@ -134,7 +137,7 @@ For each command, you can specify the credentials to use on the command line. Ho
 
 The `smb.py creds` command allows to view and edit a credential vault in an sqlite database. It is mostly useful when working in an Active Directory environment so that you can retain the domain administrator's credentials across multiple runs without the hassle to specify them on the command line. It also makes to tool more easier and effective to work with.
 
-**Disclamer:** The credentials are stored in clear-text in the sqlite db. Feel free to use NTLM hashes instead of passwords, or not to use this feature at all.
+**Disclaimer:** The credentials are stored in clear-text in the sqlite db. Feel free to use NTLM hashes instead of passwords, or not to use this feature at all.
 
 ### Writing a quick extension ###
 
