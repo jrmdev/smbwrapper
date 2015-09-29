@@ -23,14 +23,14 @@ except:
 	print "[!] Please install python-sqlite3 extension."
 	sys.exit(0)
 
-__version__ = '1.0.0alpha'
+__version__ = '1.0.1alpha'
 __author__ = 'jrm`'
 __description__ = 'Run stuff remotely - Pass the Hash'
 
 BASEDIR = os.path.dirname(os.path.realpath(__file__)) + '/tools'
 TOOLS = {
 	'smbclient': BASEDIR +  '/smbclient', # Version with Pass-The-Hash support
-	'winexe': BASEDIR + '/winexe', # Version with Pass-The-Hash support
+	'winexe': BASEDIR + '/winexe-1.1-x64-static', # Version with Pass-The-Hash support
 	'vsscpy': BASEDIR + '/win/vsscpy.vbs',
 	'xfreerdp': BASEDIR + '/xfreerdp',
 	'socat': BASEDIR + '/socat',
@@ -336,7 +336,6 @@ def winexe(cmd):
 		run.append('--system')
 	run.append('--uninstall')
 	run.append('--interactive=0')
-	run.append('--scope=127.0.0.1')
 	run.append('-U')
 	run.append(creds)
 	run.append('//'+ CONF['smb_ip'])
