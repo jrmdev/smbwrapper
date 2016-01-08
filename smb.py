@@ -317,7 +317,7 @@ def download_file(src, dst, statusbar = True):
 
 def smbclient(cmd):
 	check_tool('smbclient')
-	creds = '%s%%%s' % (CONF['smb_user'], CONF['smb_pass'])
+	creds = '%s/%s%%%s' % (CONF['smb_domain'], CONF['smb_user'], CONF['smb_pass'])
 
 	run = []
 	run.append(TOOLS['smbclient'])
@@ -335,7 +335,7 @@ def smbclient(cmd):
 
 def winexe(cmd):
 	check_tool('winexe')
-	creds = '%s%%%s' % (CONF['smb_user'], CONF['smb_pass'])
+	creds = '%s/%s%%%s' % (CONF['smb_domain'], CONF['smb_user'], CONF['smb_pass'])
 
 	run = []
 	run.append(TOOLS['winexe'])
