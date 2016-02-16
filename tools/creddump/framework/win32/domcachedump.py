@@ -111,6 +111,10 @@ def dump_file_hashes(syshive_fname, sechive_fname):
     sysaddr = HiveFileAddressSpace(syshive_fname)
     secaddr = HiveFileAddressSpace(sechive_fname)
 
+    ret_val = []
+
     for (u, d, dn, hash) in dump_hashes(sysaddr, secaddr):
-        print "%s:%s:%s:%s" % (u.lower(), hash.encode('hex'),
-                               d.lower(), dn.lower())
+        ret_val.append("%s:%s:%s:%s" % (u.lower(), hash.encode('hex'),
+                               d.lower(), dn.lower()))
+
+    return ret_val
