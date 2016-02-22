@@ -31,7 +31,7 @@ except:
 	print "[!] Please install python-sqlite3 extension."
 	sys.exit(1)
 
-__version__ = '1.0.1alpha'
+__version__ = '1.0.2alpha'
 __author__ = 'jrm`'
 __description__ = 'Run stuff remotely - Pass the Hash'
 
@@ -47,7 +47,7 @@ TOOLS = {
 	'nircmd': BASEDIR + '/win/nircmd.exe',
 	'runastask': BASEDIR + '/win/runastask.exe',
 	'logparser': BASEDIR + '/win/logparser.exe',
-	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
+	'mbsa': {'dll': BASEDIR + '/win/mbsa/%s/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/%s/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
 }
 
 CONF = {
@@ -61,19 +61,17 @@ CONF = {
 	'threaded_mode': False,
 }
 
-def hostname_or_range_to_ipList(hostname_or_range):
+def hostname_or_range_to_ip_list(hostname_or_range):
 	# If this is an IP or IP range (CIDR representation)
 	try:
-		ips = [ str(i) for i in IPNetwork(hostname_or_range) ]
-		return ips
+		return [str(i) for i in IPNetwork(hostname_or_range)]
 	except:
 		pass
 
 	# If this is a hostname
 	# If this fails, we have a problem with the input.
 	try:
-		data = socket.gethostbyname_ex(hostname_or_range)
-		return data[2]
+		return socket.gethostbyname_ex(hostname_or_range)[2]
 	except:
 		text("[!] Unable to resolve: %s" % (hostname_or_range))
 
@@ -85,9 +83,9 @@ def ip_argument_to_ip_list(input):
 	if os.path.exists(sys.argv[2]):
 		with open(sys.argv[2], "r") as f:
 			for line in f:
-				ip_list += hostname_or_range_to_ipList(line.strip())
+				ip_list += hostname_or_range_to_ip_list(line.strip())
 	else:
-			ip_list = hostname_or_range_to_ipList(sys.argv[2])
+			ip_list = hostname_or_range_to_ip_list(sys.argv[2])
 
 	return ip_list
 
@@ -97,7 +95,11 @@ def start_threaded_command(command, ip):
 	if sys.argv[1] not in ['rdp', 'mount']:
 		check_host()
 
-	globals()[command]()
+	try:
+		globals()[command]()
+
+	except KeyboardInterrupt:
+		text("\r[*] Stopping thread...", 1)
 
 def main():
 	sys.argv[0] = os.path.basename(sys.argv[0])
@@ -132,7 +134,7 @@ def main():
 		if len(sys.argv) < 3:
 			usage()
 
-		if sys.argv[1] not in ['creds', 'hash'] and 'update' not in sys.argv:
+		if sys.argv[1] not in ['creds', 'hash', 'dcsync'] and 'update' not in sys.argv:
 			#
 			# Here starts the multiprocessing part.
 			#
@@ -151,6 +153,7 @@ def main():
 			#   - An ip specification (ip/range)
 			# Whatever the mode is, we need to compute all possible IPs from this.
 			ip_list = ip_argument_to_ip_list(sys.argv[2])
+			ip_list = list(set(ip_list))
 
 			# We keep track of a process list to join them later on.
 			process_list = []
@@ -216,7 +219,7 @@ def check_creds():
 	check_tool('smbclient')
 	check = smbclient('quit')
 
-	if 'session setup failed' in check or 'tree connect failed' in check:
+	if 'NT_STATUS' in check:
 		text('[!] %s' % check, 1)
 
 	return True
@@ -237,9 +240,9 @@ def check_host():
 		text("[!] %s Error(check_host): port 445 unreachable" % CONF['smb_ip'], 1)
 
 def check_path(path):
-	if '$ARCH$' in path:
-		check_path(path.replace('$ARCH$', 'x86'))
-		check_path(path.replace('$ARCH$', 'x64'))
+	if '%s' in path:
+		check_path(path % 'x86')
+		check_path(path % 'x64')
 	else:
 		if not os.path.exists(path):
 			text("[!] %s Error(check_path): %s: file not found." % (CONF['smb_ip'], path), 1)
@@ -560,7 +563,7 @@ def smb_creds():
 
 def smb_exec():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ] <cmd>
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <cmd>
 	Execute a command remotely (use "cmd" for a command prompt)
 	Warning: When using several IPs, it is strongly recommended not
 		not to run an interactive cmd (due to parallelism).
@@ -569,11 +572,15 @@ def smb_exec():
 	set_creds(4)
 	check_creds()
 	ret = winexe(' '.join(sys.argv[3:]))
-	text("\n[*] %s Execution result\n%s\n" % (CONF['smb_ip'], ret))
+
+	if CONF['threaded_mode']:
+		text("[*] %s Execution result\n%s" % (CONF['smb_ip'], ret))
+	else:
+		print ret
 
 def smb_upexec():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ] <localfile.exe [-arg1 [-argx]]>
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <localfile.exe [-arg1 [-argx]]>
 	Upload a file and run it remotely with the specified arguments
 	"""
 
@@ -584,7 +591,7 @@ def smb_upexec():
 
 def smb_upload():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ] <localfile> <remotefile>
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <localfile> <remotefile>
 	Upload a file to the host
 	"""
 
@@ -602,7 +609,7 @@ def smb_upload():
 
 def smb_download():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <remotefile> <localfile>
 	Download a file from the host.
 	Note: smbwrapper will automatically rename the localfile using the target ip.
 		This only happens when running against several hosts.
@@ -623,6 +630,43 @@ def smb_download():
 
 	ret = smbclient('get "%s" "%s"' % (remotefile, localfile))
 	text("\n[*] %s Download result\n%s\n" % (CONF['smb_ip'], ret))
+
+def smb_check():
+	"""
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ]
+	Check whether the current credentials work on the specified IP or range
+	"""
+
+	set_creds(3)
+
+	if os.path.exists(sys.argv[2]):
+		lst = open(sys.argv[2]).readlines()
+
+	elif '-' in sys.argv[2] or '/' in sys.argv[2] or ',' in sys.argv[2]:
+		text('[+] Running port scan...')
+
+		cmd = 'nmap -sT -Pn -vv -p445 %s' % sys.argv[2]
+		process = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
+		ret = process.stdout.read()
+
+		lst = []
+		for l in ret.split('\n'):
+			if 'Discovered open port' in l:
+				t = l.split()
+				lst.append(t[-1])
+
+	else:
+		lst = [CONF['smb_ip']]
+
+	for current_ip in lst:
+		CONF['smb_ip'] = current_ip.strip()
+		check = smbclient('quit')
+
+		if 'NT_STATUS' in check:
+			text('[!] %s: %s' % (current_ip.strip(), check))
+		else:
+			text('[*] %s: Login OK' % current_ip.strip())
+
 
 def smb_dcsync():
 	"""
@@ -666,7 +710,7 @@ def smb_dcsync():
 
 def smb_creddump():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ]
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ]
 	Extract SAM, SECURITY, SYSTEM hives and dump SAM, DCC, LSA Secrets
 	"""
 
@@ -766,7 +810,7 @@ def smb_lastlog():
 
 def smb_scrshot():
 	"""
-	[-s] <ip> [ user ] [ passwd/nthash ]
+	[-s] <ip/file/range> [ user ] [ passwd/nthash ]
 	Takes a screenshot of the active session
 	"""
 
@@ -1075,8 +1119,8 @@ def smb_mbsa():
 	text("[*] Preparing MBSA...")
 
 	arch = 'x86' if os_architecture() == 32 else 'x64'
-	TOOLS['mbsa']['exe'] = TOOLS['mbsa']['exe'].replace('$ARCH$', arch)
-	TOOLS['mbsa']['dll'] = TOOLS['mbsa']['dll'].replace('$ARCH$', arch)
+	TOOLS['mbsa']['exe'] = TOOLS['mbsa']['exe'] % arch
+	TOOLS['mbsa']['dll'] = TOOLS['mbsa']['dll'] % arch
 
 	import tarfile
 	archive = tarfile.open('/tmp/mbsa.tar', mode='w')
